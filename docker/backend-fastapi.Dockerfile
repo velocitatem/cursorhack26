@@ -21,11 +21,12 @@ RUN pip install --no-cache-dir --no-deps .
 # Copy application source last - most frequently changed
 COPY apps/backend/fastapi/ ./apps/backend/fastapi/
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')" || exit 1
-
-RUN useradd --create-home --shell /bin/bash app
-RUN chown -R app:app /app
+RUN useradd --create-home --shell /bin/bash app \
+    && chown -R app:app /app
 USER app
 WORKDIR /app/apps/backend/fastapi
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import sys,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3); sys.exit(0 if r.getcode() == 200 else 1)" || exit 1
+
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5000"]
