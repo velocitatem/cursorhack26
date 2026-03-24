@@ -4,6 +4,142 @@
   overflow: hidden;
 }
 
+.story-hud {
+  position: fixed;
+  inset: 24px 24px auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  pointer-events: none;
+}
+
+.story-status-card,
+.drafts-card {
+  pointer-events: auto;
+  border-radius: 24px;
+  background: rgba(7, 11, 19, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 24px 54px rgba(3, 8, 16, 0.34);
+  backdrop-filter: blur(18px);
+}
+
+.story-status-card {
+  width: min(420px, calc(100vw - 48px));
+  padding: 20px 22px;
+}
+
+.story-title {
+  font-size: 1.7rem;
+  line-height: 1.1;
+}
+
+.story-objective,
+.story-completion,
+.story-error,
+.story-note,
+.draft-item p {
+  margin-top: 12px;
+  line-height: 1.5;
+}
+
+.story-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.story-meta span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: #dbe9fa;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.84rem;
+}
+
+.story-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.hud-button {
+  font: inherit;
+  border: none;
+  border-radius: 14px;
+  padding: 11px 16px;
+  color: #edf7ff;
+  background: rgba(255, 255, 255, 0.08);
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+.hud-button-primary {
+  background: rgba(95, 168, 255, 0.22);
+  border: 1px solid rgba(128, 196, 255, 0.24);
+}
+
+.hud-button:hover:enabled {
+  transform: translateY(-1px);
+}
+
+.hud-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.story-completion {
+  color: #aef6d7;
+}
+
+.story-error {
+  color: #ffb7b1;
+}
+
+.story-note {
+  color: rgba(214, 232, 255, 0.72);
+}
+
+.drafts-card {
+  width: min(430px, calc(100vw - 48px));
+  max-height: min(68vh, 720px);
+  padding: 20px 22px;
+  overflow: auto;
+}
+
+.drafts-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.draft-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.draft-item {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.draft-item h3 {
+  margin-top: 8px;
+  font-size: 1rem;
+}
+
+.draft-to {
+  margin-top: 0;
+  color: rgba(214, 232, 255, 0.72);
+}
+
 .world-canvas {
   width: 100%;
   height: 100%;
@@ -154,6 +290,16 @@
 }
 
 @media (max-width: 960px) {
+  .story-hud {
+    inset: 16px;
+    flex-direction: column;
+  }
+
+  .story-status-card,
+  .drafts-card {
+    width: min(100%, 100vw - 32px);
+  }
+
   .dialogue-overlay {
     padding: 16px;
   }

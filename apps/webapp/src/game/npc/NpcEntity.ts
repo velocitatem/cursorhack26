@@ -38,7 +38,7 @@ const createInteractHint = () => {
   })
   const sprite = new THREE.Sprite(material)
   sprite.scale.set(3.2, 0.6, 1)
-  sprite.position.set(0, 3.4, 0)
+  sprite.position.set(0, 2.9, 0)
   sprite.visible = false
   return sprite
 }

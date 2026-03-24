@@ -80,23 +80,27 @@ export const DialogueOverlay = ({
         <p className="dialogue-email">Email thread: {npc.emailId}</p>
         <p className="dialogue-copy">{visibleLine}</p>
 
-        <div className="choice-list">
-          {npc.choices.map((choice, index) => (
-            <button
-              className="choice-card"
-              key={choice.id}
-              onClick={() => onChoose(choice.id)}
-              type="button"
-              disabled={isAdvancing}
-            >
-              <span className="choice-key">{index + 1}</span>
-              <div className="choice-body">
-                <span className="choice-title">{choice.label}</span>
-                <span className="choice-preview">{choice.previewReply}</span>
-              </div>
-            </button>
-          ))}
-        </div>
+        {npc.choices.length ? (
+          <div className="choice-list">
+            {npc.choices.map((choice, index) => (
+              <button
+                className="choice-card"
+                key={choice.id}
+                onClick={() => onChoose(choice.id)}
+                type="button"
+                disabled={isAdvancing}
+              >
+                <span className="choice-key">{index + 1}</span>
+                <div className="choice-body">
+                  <span className="choice-title">{choice.label}</span>
+                  <span className="choice-preview">{choice.previewReply}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="dialogue-status">No more branching choices here. Use the HUD to resolve the draft bundle.</p>
+        )}
 
         {isAdvancing ? (
           <p className="dialogue-status">Locking in the route...</p>
