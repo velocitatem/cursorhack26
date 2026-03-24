@@ -1,10 +1,13 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import type { DialogueAudioStatus } from '../game/story/useDialogueAudio'
 import type { SceneNpc } from '../game/story/types'
 
 type DialogueOverlayProps = {
   npc: SceneNpc | null
   visibleLine: string
   isAdvancing: boolean
+  audioStatus: DialogueAudioStatus
+  audioError: string | null
   onClose: () => void
   onChoose: (choiceId: string) => void
 }
@@ -20,6 +23,8 @@ export const DialogueOverlay = ({
   npc,
   visibleLine,
   isAdvancing,
+  audioStatus,
+  audioError,
   onClose,
   onChoose,
 }: DialogueOverlayProps) => {
@@ -79,6 +84,8 @@ export const DialogueOverlay = ({
 
         <p className="dialogue-email">Email thread: {npc.emailId}</p>
         <p className="dialogue-copy">{visibleLine}</p>
+        {audioStatus === 'loading' ? <p className="dialogue-status">Voice warming up...</p> : null}
+        {audioStatus === 'error' && audioError ? <p className="dialogue-status">{audioError}</p> : null}
 
         {npc.choices.length ? (
           <div className="choice-list">

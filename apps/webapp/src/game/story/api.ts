@@ -14,6 +14,7 @@ import {
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '')
 const absoluteUrlPattern = /^https?:\/\//i
+const relativePathPattern = /^\//
 
 const getResponseDetail = async (response: Response) => {
   const text = await response.text()
@@ -129,3 +130,15 @@ export const getDefaultStoryApiBaseUrl = () =>
     }
     return normalizeBaseUrl(configured || 'http://localhost:9812')
   })()
+
+export const resolveStoryAssetUrl = (path: string) => {
+  if (!path) {
+    return ''
+  }
+  if (absoluteUrlPattern.test(path)) {
+    return path
+  }
+  const normalizedPath = relativePathPattern.test(path) ? path : `/${path}`
+  const baseUrl = getDefaultStoryApiBaseUrl()
+  return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath
+}

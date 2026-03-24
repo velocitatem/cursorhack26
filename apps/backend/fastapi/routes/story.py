@@ -23,6 +23,7 @@ from models.story import (
 )
 from services.scene_builder import build_scene, resolve_emails
 from services.tts import (
+    SceneTTSCacheEntry,
     ensure_scene_entry,
     generate_and_cache_scene_tts,
     get_scene_entry,
@@ -31,6 +32,8 @@ from services.tts import (
 
 router = APIRouter(prefix="/story/scene", tags=["story"])
 log = logging.getLogger(__name__)
+PENDING_TTS_WAIT_SECONDS = 0.5
+PENDING_TTS_POLL_SECONDS = 0.05
 
 
 @dataclass
@@ -69,6 +72,15 @@ def _fetch_todays_emails(request: StartSceneRequest) -> list[EmailItem]:
 
 async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) -> Scene:
     return await asyncio.to_thread(build_scene, emails, trace)
+
+
+async def _wait_for_ready_scene_tts(session_id: str, scene_id: str) -> SceneTTSCacheEntry | None:
+    deadline = asyncio.get_running_loop().time() + PENDING_TTS_WAIT_SECONDS
+    entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
+    while entry is not None and entry.status == "pending" and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(PENDING_TTS_POLL_SECONDS)
+        entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
+    return entry
 
 
 def _attach_scene_tts(session_id: str, scene: Scene) -> Scene:
@@ -275,6 +287,10 @@ async def stream_scene_tts(session_id: str, scene_id: str):
                 detail=f"Failed to generate scene audio: {exc}",
             ) from exc
         entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TTS cache unavailable.")
+    if entry.status == "pending":
+        entry = await _wait_for_ready_scene_tts(session_id=session_id, scene_id=scene_id)
     if entry is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TTS cache unavailable.")
     if entry.status == "ready" and entry.audio_bytes:
