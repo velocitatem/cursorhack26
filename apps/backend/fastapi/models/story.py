@@ -24,6 +24,8 @@ class Scene(BaseModel):
     npc_id: str = Field(min_length=1)
     npc_name: str = Field(min_length=1)
     dialogue: str = Field(min_length=1)
+    tts: str = ""
+    voice_id: str | None = None
     choices: list[SceneChoice] = Field(default_factory=list)
     is_terminal: bool = False
     related_email_ids: list[str] = Field(default_factory=list)

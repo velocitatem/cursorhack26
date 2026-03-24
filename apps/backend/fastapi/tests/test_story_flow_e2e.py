@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -11,8 +12,9 @@ repo_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(base_dir))
 sys.path.insert(0, str(repo_root))
 
-from models.story import EmailDraft, Scene
-from routes.story import router as story_router
+from models.story import EmailDraft, Scene  # noqa: E402
+from routes.story import StorySession, router as story_router  # noqa: E402
+from services.tts import SceneTTSCacheEntry  # noqa: E402
 
 
 def test_story_scene_flow_end_to_end(monkeypatch):
@@ -102,6 +104,11 @@ def test_story_scene_flow_end_to_end(monkeypatch):
 
     monkeypatch.setattr("routes.story.build_scene", fake_build_scene)
     monkeypatch.setattr("routes.story.resolve_emails", fake_resolve_emails)
+    monkeypatch.setattr(
+        "routes.story.ensure_scene_entry",
+        lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
+    )
+    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
     monkeypatch.setattr("routes.story.SESSIONS", {})
 
     client = TestClient(app)
@@ -115,6 +122,8 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     assert start_json["done"] is False
     assert start_json["scene"]["scene_id"] == "scene-1"
     assert len(start_json["scene"]["choices"]) == 3
+    assert start_json["scene"]["tts"]
+    assert start_json["scene"]["voice_id"] == "voice-1"
 
     session_id = start_json["session_id"]
     advance = client.post(
@@ -128,6 +137,8 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     advance_json = advance.json()
     assert advance_json["done"] is True
     assert advance_json["scene"]["is_terminal"] is True
+    assert advance_json["scene"]["tts"] == f"/story/scene/{session_id}/scene-2/tts"
+    assert advance_json["scene"]["voice_id"] == "voice-1"
     assert len(advance_json["trace"]) == 1
     assert advance_json["trace"][0]["choice_intent"] == "agree_immediately"
     assert advance_json["trace"][0]["choice_context"] == "timeline 6 weeks, budget 20k max"
@@ -148,3 +159,113 @@ def test_story_scene_flow_end_to_end(monkeypatch):
         "email-1",
         "email-2",
     }
+
+
+def test_scene_tts_stream_cache_hit(monkeypatch):
+    app = FastAPI()
+    app.include_router(story_router)
+    session_id = "session-1"
+    scene_id = "scene-1"
+    monkeypatch.setattr(
+        "routes.story.SESSIONS",
+        {
+            session_id: StorySession(
+                emails=[],
+                current_scene=Scene.model_validate(
+                    {
+                        "scene_id": scene_id,
+                        "npc_id": "npc-1",
+                        "npc_name": "Manager Steve",
+                        "dialogue": "Status update please. We still need this today.",
+                        "choices": [],
+                        "is_terminal": True,
+                        "related_email_ids": [],
+                    }
+                ),
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "routes.story.get_scene_entry",
+        lambda session_id, scene_id: SceneTTSCacheEntry(
+            status="ready", voice_id="voice-1", audio_bytes=b"ID3test", error=None
+        ),
+    )
+    client = TestClient(app)
+    res = client.get(f"/story/scene/{session_id}/{scene_id}/tts")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("audio/mpeg")
+    assert res.content == b"ID3test"
+
+
+def test_scene_tts_stream_pending(monkeypatch):
+    app = FastAPI()
+    app.include_router(story_router)
+    session_id = "session-2"
+    scene_id = "scene-2"
+    monkeypatch.setattr(
+        "routes.story.SESSIONS",
+        {
+            session_id: StorySession(
+                emails=[],
+                current_scene=Scene.model_validate(
+                    {
+                        "scene_id": scene_id,
+                        "npc_id": "npc-2",
+                        "npc_name": "Client Builder",
+                        "dialogue": "Can you clarify pricing details? We need a timeline too.",
+                        "choices": [],
+                        "is_terminal": True,
+                        "related_email_ids": [],
+                    }
+                ),
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "routes.story.get_scene_entry",
+        lambda session_id, scene_id: SceneTTSCacheEntry(
+            status="pending", voice_id="voice-2", audio_bytes=None, error=None
+        ),
+    )
+    client = TestClient(app)
+    res = client.get(f"/story/scene/{session_id}/{scene_id}/tts")
+    assert res.status_code == 202
+    assert res.json() == {"status": "pending"}
+    assert res.headers["retry-after"] == "1"
+
+
+def test_scene_tts_stream_provider_failure(monkeypatch):
+    app = FastAPI()
+    app.include_router(story_router)
+    session_id = "session-3"
+    scene_id = "scene-3"
+    monkeypatch.setattr(
+        "routes.story.SESSIONS",
+        {
+            session_id: StorySession(
+                emails=[],
+                current_scene=Scene.model_validate(
+                    {
+                        "scene_id": scene_id,
+                        "npc_id": "npc-3",
+                        "npc_name": "Ops Villager",
+                        "dialogue": "The pipeline failed and needs action now.",
+                        "choices": [],
+                        "is_terminal": True,
+                        "related_email_ids": [],
+                    }
+                ),
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "routes.story.get_scene_entry",
+        lambda session_id, scene_id: SceneTTSCacheEntry(
+            status="failed", voice_id="voice-3", audio_bytes=None, error="provider timeout"
+        ),
+    )
+    client = TestClient(app)
+    res = client.get(f"/story/scene/{session_id}/{scene_id}/tts")
+    assert res.status_code == 502
+    assert "provider timeout" in res.json()["detail"]
