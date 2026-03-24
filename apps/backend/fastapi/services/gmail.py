@@ -5,9 +5,14 @@ import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import EmailMessage
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from html import unescape
+import json
 import re
 from typing import Any, Literal
+from urllib.parse import quote
+from uuid import uuid4
 
 from alveslib import get_logger
 import httpx
@@ -19,9 +24,11 @@ from services.auth.types import StoredGoogleToken
 log = get_logger("backend-fastapi.gmail")
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+GMAIL_BATCH_URL = "https://gmail.googleapis.com/batch/gmail/v1"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_BATCH_MAX_SUBREQUESTS = 50
 DEFAULT_HTTP_TIMEOUT = httpx.Timeout(30.0)
 
 
@@ -151,6 +158,191 @@ def _authorized_headers(token: StoredGoogleToken) -> dict[str, str]:
     }
 
 
+def _batch_content_id_for_message(message_id: str) -> str:
+    return f"<message-{message_id}>"
+
+
+def _extract_message_id_from_content_id(content_id: str | None) -> str | None:
+    if not content_id:
+        return None
+    normalized = content_id.strip().strip("<>")
+    if normalized.startswith("response-"):
+        normalized = normalized[len("response-") :]
+    prefix = "message-"
+    if not normalized.startswith(prefix):
+        return None
+    return normalized[len(prefix) :]
+
+
+def _build_gmail_batch_request_parts(message_ids: list[str]) -> tuple[bytes, str, dict[str, str]]:
+    boundary = f"gmail_batch_{uuid4().hex}"
+    body = bytearray()
+    for message_id in message_ids:
+        encoded_message_id = quote(message_id, safe="")
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(b"Content-Type: application/http\r\n")
+        body.extend(f"Content-ID: {_batch_content_id_for_message(message_id)}\r\n\r\n".encode("ascii"))
+        body.extend(
+            (
+                f"GET /gmail/v1/users/me/messages/{encoded_message_id}?format=full HTTP/1.1\r\n"
+                "Accept: application/json\r\n\r\n"
+            ).encode("ascii")
+        )
+    body.extend(f"--{boundary}--\r\n".encode("ascii"))
+    headers = {
+        "Content-Type": f'multipart/mixed; boundary="{boundary}"',
+    }
+    return bytes(body), boundary, headers
+
+
+def _parse_gmail_batch_response(
+    response: httpx.Response, requested_ids: list[str]
+) -> list[dict[str, Any] | GmailRequestError]:
+    content_type = response.headers.get("Content-Type", "")
+    if "multipart/mixed" not in content_type.lower():
+        raise GmailRequestError("Gmail batch response was not multipart.")
+
+    raw_message = (
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+        + response.content
+    )
+    try:
+        parsed = BytesParser(policy=email_policy).parsebytes(raw_message)
+    except Exception as exc:
+        raise GmailRequestError("Failed to parse Gmail batch response.") from exc
+
+    if not parsed.is_multipart():
+        raise GmailRequestError("Gmail batch response was not multipart.")
+
+    results_by_message_id: dict[str, dict[str, Any] | GmailRequestError] = {
+        message_id: GmailRequestError("Missing Gmail batch subresponse.")
+        for message_id in requested_ids
+    }
+    fallback_ids = iter(requested_ids)
+
+    for part in parsed.iter_parts():
+        raw_part = part.get_payload(decode=True)
+        if raw_part is None:
+            continue
+
+        header_block, separator, body = raw_part.partition(b"\r\n\r\n")
+        if not separator:
+            header_block, separator, body = raw_part.partition(b"\n\n")
+        if not separator:
+            message_id = _extract_message_id_from_content_id(part.get("Content-ID"))
+            if message_id is None:
+                message_id = next(fallback_ids, None)
+            if message_id is None:
+                continue
+            results_by_message_id[message_id] = GmailRequestError("Malformed Gmail batch subresponse.")
+            continue
+
+        header_lines = [line.strip() for line in header_block.splitlines() if line.strip()]
+        if not header_lines:
+            message_id = _extract_message_id_from_content_id(part.get("Content-ID"))
+            if message_id is None:
+                message_id = next(fallback_ids, None)
+            if message_id is None:
+                continue
+            results_by_message_id[message_id] = GmailRequestError("Missing Gmail batch subresponse status.")
+            continue
+
+        status_line = header_lines[0].decode("utf-8", errors="replace")
+        match = re.match(r"HTTP/\d+(?:\.\d+)?\s+(\d{3})", status_line)
+        if not match:
+            message_id = _extract_message_id_from_content_id(part.get("Content-ID"))
+            if message_id is None:
+                message_id = next(fallback_ids, None)
+            if message_id is None:
+                continue
+            results_by_message_id[message_id] = GmailRequestError("Malformed Gmail batch subresponse status.")
+            continue
+
+        message_id = _extract_message_id_from_content_id(part.get("Content-ID"))
+        if message_id is None:
+            message_id = next(fallback_ids, None)
+        if message_id is None:
+            continue
+
+        status_code = int(match.group(1))
+        if status_code >= 400:
+            results_by_message_id[message_id] = GmailRequestError(
+                f"Gmail batch subrequest failed ({status_code})."
+            )
+            continue
+
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            results_by_message_id[message_id] = GmailRequestError(
+                "Malformed Gmail batch subresponse body."
+            )
+            results_by_message_id[message_id].__cause__ = exc
+            continue
+
+        results_by_message_id[message_id] = payload
+
+    return [results_by_message_id[message_id] for message_id in requested_ids]
+
+
+async def _fetch_messages_batch(
+    client: httpx.AsyncClient,
+    token: StoredGoogleToken,
+    message_ids: list[str],
+) -> list[dict[str, Any]]:
+    if not message_ids:
+        return []
+
+    log.info("gmail_batch_fetch_start batch_size=%s", len(message_ids))
+    body, _, batch_headers = _build_gmail_batch_request_parts(message_ids)
+    headers = {
+        "Authorization": f"Bearer {token.access_token}",
+        "Accept": "multipart/mixed",
+        **batch_headers,
+    }
+    try:
+        response = await client.post(GMAIL_BATCH_URL, headers=headers, content=body)
+    except httpx.HTTPError as exc:
+        raise GmailRequestError(f"Gmail API request failed: {exc}") from exc
+
+    if response.status_code >= 400:
+        log.warning(
+            "gmail_request_failed method=%s path=%s status=%s body_preview=%s",
+            "POST",
+            GMAIL_BATCH_URL,
+            response.status_code,
+            response.text[:300],
+        )
+        raise GmailRequestError(f"Gmail API request failed ({response.status_code}).")
+
+    parsed_results = _parse_gmail_batch_response(response, message_ids)
+    messages: list[dict[str, Any]] = []
+    failure_count = 0
+
+    for message_id, parsed in zip(message_ids, parsed_results, strict=False):
+        if isinstance(parsed, GmailRequestError):
+            failure_count += 1
+            if "subrequest failed" in str(parsed):
+                match = re.search(r"\((\d{3})\)", str(parsed))
+                log.warning(
+                    "gmail_batch_subrequest_failed message_id=%s status=%s",
+                    message_id,
+                    match.group(1) if match else "unknown",
+                )
+            else:
+                log.warning("gmail_batch_parse_failed message_id=%s", message_id, exc_info=parsed)
+            continue
+        messages.append(parsed)
+
+    log.info(
+        "gmail_batch_fetch_ok batch_size=%s success_count=%s failure_count=%s",
+        len(message_ids),
+        len(messages),
+        failure_count,
+    )
+    return messages
+
+
 async def _gmail_request(
     method: str,
     path: str,
@@ -185,6 +377,22 @@ async def _gmail_request(
     if not response.content:
         return {}
     return response.json()
+
+
+def _email_item_from_message(full_message: dict[str, Any], fallback_message_id: str) -> tuple[int, EmailItem]:
+    payload = full_message.get("payload") or {}
+    headers = payload.get("headers") or []
+    return (
+        int(full_message.get("internalDate") or 0),
+        EmailItem(
+            id=full_message.get("id") or fallback_message_id,
+            sender=_extract_header(headers, "From") or "",
+            subject=_extract_header(headers, "Subject") or "",
+            snippet=full_message.get("snippet") or "",
+            body=_extract_text_body(payload),
+            thread_id=full_message.get("threadId"),
+        ),
+    )
 
 
 def _extract_header(headers: list[dict[str, str]] | None, name: str) -> str | None:
@@ -310,37 +518,27 @@ async def _list_todays_emails_impl(
         messages = page.get("messages") or []
         log.info("gmail_list_page count=%s total_so_far=%s", len(messages), len(items_with_dates))
 
+        page_message_ids: list[str] = []
         for message_ref in messages:
-            if len(items_with_dates) >= max_emails:
+            if len(page_message_ids) + len(items_with_dates) >= max_emails:
                 break
             message_id = message_ref.get("id")
-            if not message_id:
-                continue
-            try:
-                full_message = await _gmail_request(
-                    "GET",
-                    f"messages/{message_id}",
-                    token,
-                    client,
-                    params={"format": "full"},
-                )
-                payload = full_message.get("payload") or {}
-                headers = payload.get("headers") or []
-                items_with_dates.append(
-                    (
-                        int(full_message.get("internalDate") or 0),
-                        EmailItem(
-                            id=full_message.get("id") or message_id,
-                            sender=_extract_header(headers, "From") or "",
-                            subject=_extract_header(headers, "Subject") or "",
-                            snippet=full_message.get("snippet") or "",
-                            body=_extract_text_body(payload),
-                            thread_id=full_message.get("threadId"),
-                        ),
-                    )
-                )
-            except GmailServiceError:
-                log.warning("gmail_message_parse_failed message_id=%s", message_id, exc_info=True)
+            if message_id:
+                page_message_ids.append(message_id)
+
+        for start in range(0, len(page_message_ids), GMAIL_BATCH_MAX_SUBREQUESTS):
+            batch_message_ids = page_message_ids[start : start + GMAIL_BATCH_MAX_SUBREQUESTS]
+            full_messages = await _fetch_messages_batch(client, token, batch_message_ids)
+            for full_message in full_messages:
+                message_id = full_message.get("id") or ""
+                try:
+                    items_with_dates.append(_email_item_from_message(full_message, message_id))
+                except GmailServiceError:
+                    log.warning("gmail_message_parse_failed message_id=%s", message_id, exc_info=True)
+                if len(items_with_dates) >= max_emails:
+                    break
+            if len(items_with_dates) >= max_emails:
+                break
 
         page_token = page.get("nextPageToken")
         if not page_token or len(items_with_dates) >= max_emails:

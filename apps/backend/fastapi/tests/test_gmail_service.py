@@ -3,588 +3,340 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
-from email import policy
-from email.parser import BytesParser
 import json
-import sys
 from pathlib import Path
+import re
+import sys
+from typing import Any
+from urllib.parse import unquote
 
 import httpx
+import pytest
 
-repo_root = Path(__file__).resolve().parents[4]
 base_dir = Path(__file__).resolve().parents[1]
+repo_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(base_dir))
 sys.path.insert(0, str(repo_root))
 
-from models.story import EmailDraft  # noqa: E402
+from config import Settings  # noqa: E402
 from services.auth.types import StoredGoogleToken  # noqa: E402
 from services.gmail import (  # noqa: E402
-    DEFAULT_HTTP_TIMEOUT,
+    GMAIL_BATCH_MAX_SUBREQUESTS,
     GMAIL_READONLY_SCOPE,
-    GMAIL_SEND_SCOPE,
-    GMAIL_API_BASE,
-    GmailMessageParseError,
     GmailRequestError,
     GOOGLE_TOKEN_URL,
-    _build_today_query,
-    _decode_base64url,
     list_todays_emails,
-    send_draft_replies,
 )
 
 
-class FakeSettings:
-    google_client_id = "client-id"
-    google_client_secret = "client-secret"
+def make_settings() -> Settings:
+    return Settings(
+        google_client_id="client-id",
+        google_client_secret="client-secret",
+        backend_public_url="http://localhost:9812",
+        webapp_origin="http://localhost:5173",
+        session_cookie_name="athens_session",
+        session_ttl_seconds=604800,
+        session_cookie_secure=False,
+        session_cookie_same_site="lax",
+        app_secret_key="test-secret",
+        database_url="postgresql://unused",
+    )
 
 
-def make_response(
-    request: httpx.Request,
-    payload: dict | None = None,
-    *,
-    status_code: int = 200,
-    text: str | None = None,
-) -> httpx.Response:
-    if payload is not None:
-        return httpx.Response(status_code, json=payload, request=request)
-    if text is not None:
-        return httpx.Response(status_code, text=text, request=request)
-    return httpx.Response(status_code, content=b"", request=request)
-
-
-def run_with_transport(handler, coro_factory):
-    async def runner():
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport, timeout=DEFAULT_HTTP_TIMEOUT) as client:
-            return await coro_factory(client)
-
-    return asyncio.run(runner())
-
-
-def request_json(request: httpx.Request) -> dict:
-    return json.loads(request.content.decode("utf-8"))
-
-
-def make_token(
-    *,
-    scope: str,
-    expires_at: datetime | None = None,
-    refresh_token: str | None = "refresh-token",
-) -> StoredGoogleToken:
+def make_token(*, expired: bool = False, access_token: str = "access-token") -> StoredGoogleToken:
+    now = datetime.now(timezone.utc)
     return StoredGoogleToken(
         user_id="user-1",
-        access_token="access-token",
-        refresh_token=refresh_token,
+        access_token=access_token,
+        refresh_token="refresh-token",
         id_token="id-token",
-        scope=scope,
-        token_type="Bearer",
-        expires_at=expires_at,
-    )
-
-
-def encode_text(value: str) -> str:
-    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
-
-
-def test_list_todays_emails_paginates_sorts_and_extracts_bodies():
-    request_log: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        request_log.append(request)
-        if request.method == "GET" and request.url.path == "/gmail/v1/users/me/messages":
-            if request.url.params.get("pageToken") == "page-2":
-                return make_response(request, {"messages": [{"id": "msg-3"}]})
-            return make_response(
-                request,
-                {
-                    "messages": [{"id": "msg-1"}, {"id": "msg-2"}],
-                    "nextPageToken": "page-2",
-                },
-            )
-        if request.method == "GET" and request.url == httpx.URL(f"{GMAIL_API_BASE}/messages/msg-1?format=full"):
-            return make_response(
-                request,
-                {
-                    "id": "msg-1",
-                    "threadId": "thread-1",
-                    "internalDate": "100",
-                    "snippet": "plain snippet",
-                    "payload": {
-                        "mimeType": "multipart/alternative",
-                        "headers": [
-                            {"name": "From", "value": "Boss <boss@example.com>"},
-                            {"name": "Subject", "value": "Status"},
-                        ],
-                        "parts": [
-                            {"mimeType": "text/html", "body": {"data": encode_text("<p>Ignore html</p>")}},
-                            {"mimeType": "text/plain", "body": {"data": encode_text("Plain body")}},
-                        ],
-                    },
-                },
-            )
-        if request.method == "GET" and request.url == httpx.URL(f"{GMAIL_API_BASE}/messages/msg-2?format=full"):
-            return make_response(
-                request,
-                {
-                    "id": "msg-2",
-                    "threadId": "thread-2",
-                    "internalDate": "200",
-                    "snippet": "html snippet",
-                    "payload": {
-                        "mimeType": "text/html",
-                        "headers": [
-                            {"name": "From", "value": "Client <client@example.com>"},
-                            {"name": "Subject", "value": "Proposal"},
-                        ],
-                        "body": {"data": encode_text("<div>Hello<br>World</div>")},
-                    },
-                },
-            )
-        if request.method == "GET" and request.url == httpx.URL(f"{GMAIL_API_BASE}/messages/msg-3?format=full"):
-            return make_response(
-                request,
-                {
-                    "id": "msg-3",
-                    "threadId": "thread-3",
-                    "internalDate": "50",
-                    "snippet": "nested snippet",
-                    "payload": {
-                        "mimeType": "multipart/mixed",
-                        "headers": [
-                            {"name": "From", "value": "Ops <ops@example.com>"},
-                            {"name": "Subject", "value": "Check-in"},
-                        ],
-                        "parts": [
-                            {
-                                "mimeType": "multipart/alternative",
-                                "parts": [
-                                    {"mimeType": "text/plain", "body": {"data": encode_text("Nested body")}},
-                                ],
-                            }
-                        ],
-                    },
-                },
-            )
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
-
-    emails, _ = run_with_transport(
-        handler,
-        lambda client: list_todays_emails(
-            make_token(scope=GMAIL_READONLY_SCOPE),
-            http_client=client,
-        ),
-    )
-
-    assert [email.id for email in emails] == ["msg-2", "msg-1", "msg-3"]
-    assert emails[0].body == "Hello\nWorld"
-    assert emails[0].sender == "Client <client@example.com>"
-    assert emails[1].body == "Plain body"
-    assert emails[2].body == "Nested body"
-
-    list_calls = [request for request in request_log if request.url.path == "/gmail/v1/users/me/messages"]
-    assert len(list_calls) == 2
-    assert list_calls[0].url.params["labelIds"] == "INBOX"
-    assert list_calls[0].url.params["includeSpamTrash"] == "false"
-    assert list_calls[0].url.params["q"].startswith("after:")
-
-
-def test_list_todays_emails_refreshes_expired_token(monkeypatch):
-    request_log: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        request_log.append(request)
-        if request.method == "POST" and str(request.url) == GOOGLE_TOKEN_URL:
-            return make_response(
-                request,
-                {
-                    "access_token": "fresh-access-token",
-                    "expires_in": 3600,
-                    "scope": GMAIL_READONLY_SCOPE,
-                    "token_type": "Bearer",
-                },
-            )
-        if request.method == "GET" and request.url.path == "/gmail/v1/users/me/messages":
-            return make_response(request, {"messages": []})
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
-
-    monkeypatch.setattr("services.gmail.get_settings", lambda: FakeSettings())
-
-    _, returned_token = run_with_transport(
-        handler,
-        lambda client: list_todays_emails(
-            make_token(
-                scope=GMAIL_READONLY_SCOPE,
-                expires_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-            ),
-            http_client=client,
-        ),
-    )
-
-    assert str(request_log[0].url) == GOOGLE_TOKEN_URL
-    assert request_log[1].headers["Authorization"] == "Bearer fresh-access-token"
-    assert returned_token.access_token == "fresh-access-token"
-
-
-def test_list_todays_emails_refresh_persists_rotated_refresh_token(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST" and str(request.url) == GOOGLE_TOKEN_URL:
-            return make_response(
-                request,
-                {
-                    "access_token": "fresh-access-token",
-                    "refresh_token": "rotated-refresh-token",
-                    "expires_in": 3600,
-                    "scope": GMAIL_READONLY_SCOPE,
-                    "token_type": "Bearer",
-                },
-            )
-        if request.method == "GET" and request.url.path == "/gmail/v1/users/me/messages":
-            return make_response(request, {"messages": []})
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
-
-    monkeypatch.setattr("services.gmail.get_settings", lambda: FakeSettings())
-
-    _, returned_token = run_with_transport(
-        handler,
-        lambda client: list_todays_emails(
-            make_token(
-                scope=GMAIL_READONLY_SCOPE,
-                expires_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-            ),
-            http_client=client,
-        ),
-    )
-
-    assert returned_token.refresh_token == "rotated-refresh-token"
-
-
-def test_list_todays_emails_refresh_keeps_existing_refresh_token_when_missing(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST" and str(request.url) == GOOGLE_TOKEN_URL:
-            return make_response(
-                request,
-                {
-                    "access_token": "fresh-access-token",
-                    "expires_in": 3600,
-                    "scope": GMAIL_READONLY_SCOPE,
-                    "token_type": "Bearer",
-                },
-            )
-        if request.method == "GET" and request.url.path == "/gmail/v1/users/me/messages":
-            return make_response(request, {"messages": []})
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
-
-    monkeypatch.setattr("services.gmail.get_settings", lambda: FakeSettings())
-
-    _, returned_token = run_with_transport(
-        handler,
-        lambda client: list_todays_emails(
-            make_token(
-                scope=GMAIL_READONLY_SCOPE,
-                expires_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-                refresh_token="existing-refresh-token",
-            ),
-            http_client=client,
-        ),
-    )
-
-    assert returned_token.refresh_token == "existing-refresh-token"
-
-
-def test_list_todays_emails_raises_when_token_not_refreshable():
-    token = make_token(
         scope=GMAIL_READONLY_SCOPE,
-        expires_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-        refresh_token=None,
+        token_type="Bearer",
+        expires_at=now - timedelta(minutes=5) if expired else now + timedelta(hours=1),
     )
 
-    try:
-        asyncio.run(list_todays_emails(token))
-    except GmailRequestError:
-        raise AssertionError("Expected token refresh failure, got request error")
-    except Exception as exc:
-        assert str(exc) == "Google token expired and cannot be refreshed."
-    else:
-        raise AssertionError("Expected RuntimeError for expired non-refreshable token")
+
+def encode_body(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii").rstrip("=")
 
 
-def test_list_todays_emails_raises_when_scope_missing():
-    try:
-        asyncio.run(list_todays_emails(make_token(scope=GMAIL_SEND_SCOPE)))
-    except Exception as exc:
-        assert "Missing required Gmail scopes" in str(exc)
-    else:
-        raise AssertionError("Expected scope validation failure")
-
-
-def test_send_draft_replies_sends_threaded_reply_and_falls_back_to_reply_to():
-    post_payloads: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path.endswith("/messages/original-1"):
-            return make_response(
-                request,
-                {
-                    "id": "original-1",
-                    "threadId": "thread-1",
-                    "payload": {
-                        "headers": [
-                            {"name": "Message-ID", "value": "<msg-1@example.com>"},
-                            {"name": "References", "value": "<older@example.com>"},
-                            {"name": "Subject", "value": "Original subject"},
-                            {"name": "From", "value": "Boss <boss@example.com>"},
-                            {"name": "Reply-To", "value": "Reply Desk <reply@example.com>"},
-                        ]
-                    },
-                },
-            )
-        if request.method == "POST" and request.url.path.endswith("/messages/send"):
-            post_payloads.append(request_json(request))
-            return make_response(request, {"id": "sent-1", "threadId": "thread-1"})
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
-
-    results, _ = run_with_transport(
-        handler,
-        lambda client: send_draft_replies(
-            make_token(scope=GMAIL_SEND_SCOPE),
-            [
-                EmailDraft(
-                    email_id="original-1",
-                    to="",
-                    subject="",
-                    body="Thanks, sending an update shortly.",
-                )
+def make_message(
+    message_id: str,
+    *,
+    internal_date: int,
+    sender: str | None = None,
+    subject: str | None = None,
+    body: str = "Plain text body",
+    snippet: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": message_id,
+        "threadId": f"thread-{message_id}",
+        "internalDate": str(internal_date),
+        "snippet": snippet or f"snippet-{message_id}",
+        "payload": {
+            "mimeType": "multipart/alternative",
+            "headers": [
+                {"name": "From", "value": sender or f"{message_id}@example.com"},
+                {"name": "Subject", "value": subject or f"Subject {message_id}"},
             ],
-            http_client=client,
-        ),
-    )
-
-    assert results[0].status == "sent"
-    assert results[0].gmail_message_id == "sent-1"
-    payload = post_payloads[0]
-    assert payload["threadId"] == "thread-1"
-
-    raw_bytes = _decode_base64url(payload["raw"])
-    parsed = BytesParser(policy=policy.default).parsebytes(raw_bytes)
-    assert parsed["To"] == "Reply Desk <reply@example.com>"
-    assert parsed["Subject"] == "Re: Original subject"
-    assert parsed["In-Reply-To"] == "<msg-1@example.com>"
-    assert parsed["References"] == "<older@example.com> <msg-1@example.com>"
-    assert "Thanks, sending an update shortly." in parsed.get_body(preferencelist=("plain",)).get_content()
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": {"data": encode_body(body)},
+                }
+            ],
+        },
+    }
 
 
-def test_send_draft_replies_returns_failed_result_when_original_fetch_fails():
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path.endswith("/messages/missing"):
-            return make_response(request, status_code=404, text='{"error":"not found"}')
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
-
-    results, _ = run_with_transport(
-        handler,
-        lambda client: send_draft_replies(
-            make_token(scope=GMAIL_SEND_SCOPE),
-            [EmailDraft(email_id="missing", to="person@example.com", subject="Re: Test", body="Body")],
-            http_client=client,
-        ),
-    )
-
-    assert results == [
-        type(results[0])(
-            email_id="missing",
-            thread_id=None,
-            gmail_message_id=None,
-            status="failed",
-            error="Gmail API request failed (404).",
+def make_batch_http_response(
+    responses_by_message_id: dict[str, tuple[int, Any]],
+    *,
+    include_content_ids: bool = True,
+) -> httpx.Response:
+    boundary = "batch_response_boundary"
+    parts: list[bytes] = []
+    for message_id, (status_code, payload) in responses_by_message_id.items():
+        reason = "OK" if status_code < 400 else "Bad Request"
+        body = payload if isinstance(payload, str) else json.dumps(payload)
+        headers = [
+            f"--{boundary}",
+            "Content-Type: application/http",
+        ]
+        if include_content_ids:
+            headers.append(f"Content-ID: <response-message-{message_id}>")
+        headers.extend(
+            [
+                "",
+                f"HTTP/1.1 {status_code} {reason}",
+                "Content-Type: application/json; charset=UTF-8",
+                "",
+                body,
+            ]
         )
-    ]
-
-
-def test_send_draft_replies_supports_mixed_batch_results():
-    sent_payloads: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path.endswith("/messages/original-good"):
-            return make_response(
-                request,
-                {
-                    "id": "original-good",
-                    "threadId": "thread-good",
-                    "payload": {
-                        "headers": [
-                            {"name": "Subject", "value": "Good"},
-                            {"name": "From", "value": "good@example.com"},
-                        ]
-                    },
-                },
-            )
-        if request.method == "GET" and request.url.path.endswith("/messages/original-bad"):
-            return make_response(request, status_code=500, text='{"error":"boom"}')
-        if request.method == "POST" and request.url.path.endswith("/messages/send"):
-            sent_payloads.append(request_json(request))
-            return make_response(request, {"id": "sent-good", "threadId": "thread-good"})
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
-
-    results, _ = run_with_transport(
-        handler,
-        lambda client: send_draft_replies(
-            make_token(scope=GMAIL_SEND_SCOPE),
-            [
-                EmailDraft(email_id="original-good", to="good@example.com", subject="Re: Good", body="Yes"),
-                EmailDraft(email_id="original-bad", to="bad@example.com", subject="Re: Bad", body="No"),
-            ],
-            http_client=client,
-        ),
+        parts.append("\r\n".join(headers).encode("utf-8"))
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return httpx.Response(
+        200,
+        headers={"Content-Type": f'multipart/mixed; boundary="{boundary}"'},
+        content=b"\r\n".join(parts),
     )
 
-    assert [result.status for result in results] == ["sent", "failed"]
-    assert sent_payloads[0]["threadId"] == "thread-good"
-    assert results[1].error == "Gmail API request failed (500)."
+
+def extract_batch_message_ids(request: httpx.Request) -> list[str]:
+    matches = re.findall(
+        r"GET /gmail/v1/users/me/messages/([^?\s]+)\?format=full HTTP/1\.1",
+        request.content.decode("utf-8"),
+    )
+    return [unquote(match) for match in matches]
 
 
-def test_send_draft_replies_refreshes_expired_token(monkeypatch):
-    request_log: list[httpx.Request] = []
+def run(coro):
+    return asyncio.run(coro)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        request_log.append(request)
-        if request.method == "POST" and str(request.url) == GOOGLE_TOKEN_URL:
-            return make_response(
-                request,
+
+def test_list_todays_emails_uses_single_batch_for_small_page(monkeypatch):
+    monkeypatch.setattr("services.gmail.get_settings", make_settings)
+    requests: list[httpx.Request] = []
+    messages = {
+        "msg-1": make_message("msg-1", internal_date=2000, subject="Later"),
+        "msg-2": make_message("msg-2", internal_date=3000, subject="Latest"),
+        "msg-3": make_message("msg-3", internal_date=1000, subject="Earlier"),
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/gmail/v1/users/me/messages":
+            return httpx.Response(200, json={"messages": [{"id": message_id} for message_id in messages]})
+        if request.url.path == "/batch/gmail/v1":
+            ids = extract_batch_message_ids(request)
+            return make_batch_http_response({message_id: (200, messages[message_id]) for message_id in ids})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        items, returned_token = run(list_todays_emails(make_token(), max_emails=10, http_client=client))
+    finally:
+        run(client.aclose())
+
+    assert returned_token.access_token == "access-token"
+    assert [item.id for item in items] == ["msg-2", "msg-1", "msg-3"]
+    assert [item.subject for item in items] == ["Latest", "Later", "Earlier"]
+    assert items[0].body == "Plain text body"
+    assert len([request for request in requests if request.url.path == "/batch/gmail/v1"]) == 1
+    assert not any(
+        request.method == "GET" and request.url.path.startswith("/gmail/v1/users/me/messages/")
+        for request in requests
+    )
+
+
+def test_list_todays_emails_splits_large_pages_into_multiple_batches(monkeypatch):
+    monkeypatch.setattr("services.gmail.get_settings", make_settings)
+    message_ids = [f"msg-{index}" for index in range(55)]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/gmail/v1/users/me/messages":
+            return httpx.Response(200, json={"messages": [{"id": message_id} for message_id in message_ids]})
+        if request.url.path == "/batch/gmail/v1":
+            ids = extract_batch_message_ids(request)
+            assert len(ids) <= GMAIL_BATCH_MAX_SUBREQUESTS
+            return make_batch_http_response(
                 {
-                    "access_token": "fresh-send-token",
-                    "expires_in": 3600,
-                    "scope": GMAIL_SEND_SCOPE,
+                    message_id: (
+                        200,
+                        make_message(message_id, internal_date=1000 + index),
+                    )
+                    for index, message_id in enumerate(ids)
+                }
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    batch_requests: list[list[str]] = []
+
+    async def wrapped_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/batch/gmail/v1":
+            batch_requests.append(extract_batch_message_ids(request))
+        return await handler(request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(wrapped_handler))
+    try:
+        items, _ = run(list_todays_emails(make_token(), max_emails=55, http_client=client))
+    finally:
+        run(client.aclose())
+
+    assert len(items) == 55
+    assert len(batch_requests) == 2
+    assert len(batch_requests[0]) == 50
+    assert len(batch_requests[1]) == 5
+
+
+def test_list_todays_emails_skips_failed_subresponses(monkeypatch):
+    monkeypatch.setattr("services.gmail.get_settings", make_settings)
+    messages = {
+        "msg-1": make_message("msg-1", internal_date=1000),
+        "msg-3": make_message("msg-3", internal_date=3000),
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/gmail/v1/users/me/messages":
+            return httpx.Response(
+                200,
+                json={"messages": [{"id": "msg-1"}, {"id": "msg-2"}, {"id": "msg-3"}]},
+            )
+        if request.url.path == "/batch/gmail/v1":
+            ids = extract_batch_message_ids(request)
+            response_payload = {
+                "msg-1": (200, messages["msg-1"]),
+                "msg-2": (404, {"error": {"message": "Not found"}}),
+                "msg-3": (200, messages["msg-3"]),
+            }
+            return make_batch_http_response({message_id: response_payload[message_id] for message_id in ids})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        items, _ = run(list_todays_emails(make_token(), max_emails=10, http_client=client))
+    finally:
+        run(client.aclose())
+
+    assert [item.id for item in items] == ["msg-3", "msg-1"]
+
+
+def test_list_todays_emails_raises_for_malformed_outer_batch_response(monkeypatch):
+    monkeypatch.setattr("services.gmail.get_settings", make_settings)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/gmail/v1/users/me/messages":
+            return httpx.Response(200, json={"messages": [{"id": "msg-1"}]})
+        if request.url.path == "/batch/gmail/v1":
+            return httpx.Response(200, headers={"Content-Type": "application/json"}, json={"id": "msg-1"})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GmailRequestError, match="multipart"):
+            run(list_todays_emails(make_token(), max_emails=10, http_client=client))
+    finally:
+        run(client.aclose())
+
+
+def test_list_todays_emails_refreshes_expired_token_before_batch(monkeypatch):
+    monkeypatch.setattr("services.gmail.get_settings", make_settings)
+    observed_batch_auth_headers: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == GOOGLE_TOKEN_URL:
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "refreshed-access-token",
+                    "refresh_token": "refreshed-refresh-token",
                     "token_type": "Bearer",
+                    "scope": GMAIL_READONLY_SCOPE,
+                    "expires_in": 3600,
                 },
             )
-        if request.method == "GET" and request.url.path.endswith("/messages/original-1"):
-            return make_response(
-                request,
-                {
-                    "id": "original-1",
-                    "threadId": "thread-1",
-                    "payload": {
-                        "headers": [
-                            {"name": "Subject", "value": "Original"},
-                            {"name": "From", "value": "boss@example.com"},
-                        ]
-                    },
-                },
-            )
-        if request.method == "POST" and request.url.path.endswith("/messages/send"):
-            assert request.headers["Authorization"] == "Bearer fresh-send-token"
-            return make_response(request, {"id": "sent-1", "threadId": "thread-1"})
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
+        if request.url.path == "/gmail/v1/users/me/messages":
+            assert request.headers["Authorization"] == "Bearer refreshed-access-token"
+            return httpx.Response(200, json={"messages": [{"id": "msg-1"}]})
+        if request.url.path == "/batch/gmail/v1":
+            observed_batch_auth_headers.append(request.headers["Authorization"])
+            return make_batch_http_response({"msg-1": (200, make_message("msg-1", internal_date=1000))})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
-    monkeypatch.setattr("services.gmail.get_settings", lambda: FakeSettings())
-
-    results, returned_token = run_with_transport(
-        handler,
-        lambda client: send_draft_replies(
-            make_token(
-                scope=GMAIL_SEND_SCOPE,
-                expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
-            ),
-            [EmailDraft(email_id="original-1", to="boss@example.com", subject="Re: Original", body="Reply")],
-            http_client=client,
-        ),
-    )
-
-    assert results[0].status == "sent"
-    assert request_log[1].headers["Authorization"] == "Bearer fresh-send-token"
-    assert returned_token.access_token == "fresh-send-token"
-
-
-def test_send_draft_replies_raises_when_scope_missing():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
-        asyncio.run(
-            send_draft_replies(
-                make_token(scope=GMAIL_READONLY_SCOPE),
-                [EmailDraft(email_id="original-1", to="boss@example.com", subject="Re: Original", body="Reply")],
-            )
-        )
-    except Exception as exc:
-        assert "Missing required Gmail scopes" in str(exc)
-    else:
-        raise AssertionError("Expected scope validation failure")
+        items, refreshed_token = run(list_todays_emails(make_token(expired=True), max_emails=10, http_client=client))
+    finally:
+        run(client.aclose())
+
+    assert [item.id for item in items] == ["msg-1"]
+    assert observed_batch_auth_headers == ["Bearer refreshed-access-token"]
+    assert refreshed_token.access_token == "refreshed-access-token"
+    assert refreshed_token.refresh_token == "refreshed-refresh-token"
 
 
-def test_list_todays_emails_skips_message_with_malformed_body():
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/gmail/v1/users/me/messages":
-            return make_response(request, {"messages": [{"id": "bad-msg"}, {"id": "good-msg"}]})
-        if request.method == "GET" and request.url == httpx.URL(f"{GMAIL_API_BASE}/messages/bad-msg?format=full"):
-            return make_response(
-                request,
-                {
-                    "id": "bad-msg",
-                    "threadId": "bad-thread",
-                    "internalDate": "10",
-                    "snippet": "bad",
-                    "payload": {
-                        "mimeType": "text/plain",
-                        "headers": [{"name": "From", "value": "bad@example.com"}],
-                        "body": {"data": "!"},
+def test_list_todays_emails_paginates_until_success_limit(monkeypatch):
+    monkeypatch.setattr("services.gmail.get_settings", make_settings)
+    list_request_page_tokens: list[str | None] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/gmail/v1/users/me/messages":
+            page_token = request.url.params.get("pageToken")
+            list_request_page_tokens.append(page_token)
+            if page_token is None:
+                assert request.url.params.get("maxResults") == "3"
+                return httpx.Response(
+                    200,
+                    json={
+                        "messages": [{"id": "msg-1"}, {"id": "msg-2"}],
+                        "nextPageToken": "page-2",
                     },
-                },
+                )
+            assert page_token == "page-2"
+            assert request.url.params.get("maxResults") == "2"
+            return httpx.Response(
+                200,
+                json={"messages": [{"id": "msg-3"}, {"id": "msg-4"}]},
             )
-        if request.method == "GET" and request.url == httpx.URL(f"{GMAIL_API_BASE}/messages/good-msg?format=full"):
-            return make_response(
-                request,
-                {
-                    "id": "good-msg",
-                    "threadId": "good-thread",
-                    "internalDate": "20",
-                    "snippet": "good",
-                    "payload": {
-                        "mimeType": "text/plain",
-                        "headers": [{"name": "From", "value": "good@example.com"}],
-                        "body": {"data": encode_text("Good body")},
-                    },
-                },
-            )
-        raise AssertionError(f"Unexpected {request.method} URL: {request.url}")
+        if request.url.path == "/batch/gmail/v1":
+            ids = extract_batch_message_ids(request)
+            payloads = {
+                "msg-1": (404, {"error": {"message": "gone"}}),
+                "msg-2": (200, make_message("msg-2", internal_date=2000)),
+                "msg-3": (200, make_message("msg-3", internal_date=3000)),
+                "msg-4": (200, make_message("msg-4", internal_date=4000)),
+            }
+            return make_batch_http_response({message_id: payloads[message_id] for message_id in ids})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
-    emails, _ = run_with_transport(
-        handler,
-        lambda client: list_todays_emails(
-            make_token(scope=GMAIL_READONLY_SCOPE),
-            http_client=client,
-        ),
-    )
-
-    assert [email.id for email in emails] == ["good-msg"]
-
-
-def test_decode_base64url_raises_precise_parse_error():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
-        _decode_base64url("*")
-    except GmailMessageParseError as exc:
-        assert str(exc) == "Malformed Gmail message body encoding."
-    else:
-        raise AssertionError("Expected GmailMessageParseError")
+        items, _ = run(list_todays_emails(make_token(), max_emails=3, http_client=client))
+    finally:
+        run(client.aclose())
 
-
-def test_gmail_request_network_failure_raises_precise_error():
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("network down", request=request)
-
-    try:
-        run_with_transport(
-            handler,
-            lambda client: list_todays_emails(
-                make_token(scope=GMAIL_READONLY_SCOPE),
-                http_client=client,
-            ),
-        )
-    except GmailRequestError as exc:
-        assert "network down" in str(exc)
-    else:
-        raise AssertionError("Expected GmailRequestError")
-
-
-def test_build_today_query_uses_same_local_day_window():
-    now = datetime(2026, 3, 24, 15, 30, tzinfo=timezone.utc)
-    query = _build_today_query(now)
-    local_now = now.astimezone()
-    start_of_day = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    assert query == f"after:{int(start_of_day.timestamp())} before:{int(local_now.timestamp())}"
+    assert [item.id for item in items] == ["msg-4", "msg-3", "msg-2"]
+    assert list_request_page_tokens == [None, "page-2"]
