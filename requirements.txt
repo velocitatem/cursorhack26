@@ -1,33 +1,21 @@
-# Legacy fallback only. Primary deps live in pyproject.toml.
-# Core - always installed
+# Legacy fallback only. Install full template: uv sync  (see pyproject.toml).
+
 python-dotenv
 requests
 tqdm
 
-# Logging (alveslib)
-python-logging-loki
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-logging
+opentelemetry-instrumentation-requests
 
-# Backend (fastapi or flask)
 fastapi
-flask
-flask-cors
 uvicorn[standard]
 pydantic
 
-# Worker (Celery + Redis)
 celery[redis]
 redis
 
-# Scraper (alveslib)
-seleniumbase
-beautifulsoup4
-
-# Minimal webapp
-streamlit
-
-# AI / Agent SDK
 anthropic
-
-# ML (heavy - comment out if not needed)
-torch
-tensorboard

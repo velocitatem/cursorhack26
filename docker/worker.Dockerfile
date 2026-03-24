@@ -23,7 +23,6 @@ RUN pip install --no-cache-dir --no-deps .
 # Copy application source last - most frequently changed
 RUN mkdir -p ./worker/
 COPY apps/worker/ ./worker/
-COPY src/ ./src/
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import redis; r=redis.from_url('redis://redis:6379'); r.ping()" || exit 1

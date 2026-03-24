@@ -75,7 +75,7 @@ test: venv ## Run pytest
 ## ── Docker ───────────────────────────────────────────────────────────────────
 
 up: ## Start core services (redis, backend-fastapi, ml-inference, worker)
-	@docker compose up -d redis backend-fastapi ml-inference worker
+	@docker compose up -d redis backend-fastapi worker
 
 down: ## Stop all services
 	@docker compose down
@@ -92,10 +92,6 @@ rebuild: ## Rebuild + restart all services (no cache)
 ## ── Service Profiles ─────────────────────────────────────────────────────────
 
 lift: up ## Alias for 'up'
-
-lift.minio: ## Start core services + MinIO object storage
-	@docker compose --profile minio up -d
-	@echo "MinIO console: http://localhost:9901 (minioadmin/minioadmin)"
 
 lift.tensorboard: ## Start TensorBoard
 	@docker compose --profile tensorboard up -d

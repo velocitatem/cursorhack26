@@ -19,22 +19,6 @@ services:
       - PYTHONPATH=/app
     restart: unless-stopped
 
-  ml-inference:
-    container_name: "${NAME}-mlinfer"
-    build:
-      context: ./
-      dockerfile: ./docker/ml.Dockerfile
-    ports:
-      - "8200:8000"
-    environment:
-      - ML_LATEST_WEIGHTS_PATH=/app/models/weights
-      - PYTHONPATH=/app
-    volumes:
-      - ./ml/models:/app/models
-      - ./.env:/app/.env
-    depends_on:
-      - redis
-    restart: unless-stopped
 
   worker:
     container_name: "${NAME}-worker"
