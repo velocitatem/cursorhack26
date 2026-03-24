@@ -1,20 +1,24 @@
 :root {
   color-scheme: dark;
-  font-family:
-    Inter,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
+  font-family: 'Space Grotesk', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #f8fbff;
-  background: #060b12;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  --bg: #0c0f14;
+  --surface: #16191f;
+  --text-primary: #e8eaed;
+  --text-muted: #7a7f88;
+  --accent: #e2a64b;
+  --accent-hover: #c8903e;
+  --error: #d4644a;
+  --pill-bg: rgba(22, 25, 31, 0.85);
+
+  color: var(--text-primary);
+  background: var(--bg);
 }
 
 * {

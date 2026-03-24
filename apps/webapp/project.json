@@ -1,0 +1,29 @@
+{
+  "name": "webapp",
+  "root": "apps/webapp",
+  "sourceRoot": "apps/webapp/src",
+  "projectType": "application",
+  "targets": {
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/webapp",
+        "command": "bun run dev"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/webapp",
+        "command": "bun run build"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/webapp",
+        "command": "bun run lint"
+      }
+    }
+  }
+}

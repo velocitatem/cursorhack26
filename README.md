@@ -91,7 +91,7 @@ make dev                    # Next.js webapp at http://localhost:3000
 make nx.projects            # list Nx projects in the monorepo
 ```
 
-For Docker services (redis, ml inference, worker):
+For the local backend stack (redis, postgres, backend API):
 ```bash
 make up
 ```
@@ -122,15 +122,11 @@ src/               Simple scripts / CLI entry points
 |--------|-------------|
 | `make init` | First-time setup |
 | `make dev` | Start Next.js webapp |
-| `make up` | Start Docker core services |
+| `make up` | Start local backend services |
 | `make run.backend` | Start API backend |
 | `make run.worker` | Start Celery worker |
 | `make nx.graph` | Open Nx project graph |
 | `make nx.affected` | Run lint/test/build for affected projects |
-| `make lift.minio` | Start MinIO object storage |
-| `make lift.logging` | Start Loki + Grafana |
-| `make lift.mlflow` | Start optional MLflow server |
-| `make lift.database` | Start Postgres / MongoDB |
 | `make doctor` | Verify toolchain |
 
 Run `make help` for the full list.
@@ -219,16 +215,15 @@ bun x nx run ml:train
 
 `ml:train` depends on `ml:etl`, and both targets cache artifacts in `ml/data/processed`, `ml/models/weights`, and `ml/tensorboard`.
 
-## Services (docker compose profiles)
+## Local Docker Services
 
-| Profile | Services | Command |
-|---------|----------|---------|
-| _(default)_ | redis, ml-inference, worker | `make up` |
-| `minio` | + MinIO object storage | `make lift.minio` |
-| `tensorboard` | + TensorBoard | `make lift.tensorboard` |
-| `mlflow` | + MLflow tracking server (optional) | `make lift.mlflow` |
-| `logging` | + Loki + Grafana | `make lift.logging` |
-| `database` | + Postgres + MongoDB | `make lift.database` |
+`make up` starts the local services the current app path uses:
+
+- `backend-fastapi`
+- `postgres`
+- `redis`
+
+The Celery worker still exists in the repo, but it is not part of the current Docker stack because the app does not call any background jobs yet.
 
 ## Webapp Auth
 

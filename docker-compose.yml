@@ -18,131 +18,18 @@ services:
     ports:
       - "${BACKEND_PORT:-5000}:5000"
     environment:
-      - PYTHONPATH=/app
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
-      - OTEL_SERVICE_NAME=${OTEL_BACKEND_SERVICE_NAME:-backend-fastapi}
-    restart: unless-stopped
-
-
-  worker:
-    container_name: "${NAME}-worker"
-    build:
-      context: ./
-      dockerfile: ./docker/worker.Dockerfile
-    env_file:
-      - ./.env
-    environment:
+      - POSTGRES_HOST=postgres
       - REDIS_URL=redis://redis:6379
       - PYTHONPATH=/app
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
-      - OTEL_SERVICE_NAME=${OTEL_WORKER_SERVICE_NAME:-worker}
-    volumes:
-      - ./.env:/app/.env
     depends_on:
+      - postgres
       - redis
     restart: unless-stopped
 
-  minio:
-    image: minio/minio:latest
-    container_name: "${NAME}-minio"
-    profiles: ["minio"]
-    ports:
-      - "9900:9000"   # API endpoint
-      - "9901:9001"   # Web console
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-    restart: unless-stopped
-
-  create-bucket:
-    image: minio/mc
-    container_name: "${NAME}-create-bucket"
-    profiles: ["minio"]
-    depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      sleep 5;
-      mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      mc mb myminio/${NAME:-app} --ignore-existing;
-      exit 0;
-      "
-
-  tensorboard:
-    image: tensorflow/tensorflow:latest
-    container_name: "${NAME}-tensorboard"
-    profiles: ["tensorboard"]
-    ports:
-      - "6006:6006"
-    volumes:
-      - ./ml/tensorboard:/logs
-    command: tensorboard --logdir=/logs --host=0.0.0.0 --port=6006
-    restart: unless-stopped
-
-  mlflow:
-    image: python:3.12-slim
-    container_name: "${NAME}-mlflow"
-    profiles: ["mlflow"]
-    ports:
-      - "5000:5000"
-    volumes:
-      - mlflow_data:/mlflow
-    command: >
-      /bin/sh -c "
-      pip install --no-cache-dir mlflow &&
-      mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
-      "
-    restart: unless-stopped
-
-  # Logging Infrastructure - Minimal Setup
-  loki:
-    image: grafana/loki:2.9.0
-    container_name: "${NAME}-loki"
-    profiles: ["logging"]
-    ports:
-      - "${LOKI_PORT}:3100"
-    volumes:
-      - loki_data:/loki
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana:10.2.0
-    container_name: "${NAME}-grafana"
-    profiles: ["logging"]
-    ports:
-      - "${GRAFANA_PORT}:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-    restart: unless-stopped
-
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    container_name: "${NAME}-jaeger"
-    profiles: ["telemetry"]
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-    ports:
-      - "${JAEGER_UI_PORT:-16686}:16686"
-      - "${OTEL_HTTP_PORT:-4318}:4318"
-      - "${OTEL_GRPC_PORT:-4317}:4317"
-    restart: unless-stopped
-
-  # Database Services
   postgres:
     image: postgres:15-alpine
     container_name: "${NAME}-postgres"
-    profiles: ["database", "postgres"]
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     environment:
@@ -155,25 +42,6 @@ services:
       - ./database/:/docker-entrypoint-initdb.d/:ro
     restart: unless-stopped
 
-  mongodb:
-    image: mongo:7-jammy
-    container_name: "${NAME}-mongodb"
-    profiles: ["database", "mongodb"]
-    ports:
-      - "${MONGO_PORT:-27017}:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-admin123}
-      MONGO_INITDB_DATABASE: ${MONGO_DB:-app}
-    volumes:
-      - mongodb_data:/data/db
-    restart: unless-stopped
-
 volumes:
   redis_data:
-  minio_data:
-  loki_data:
-  grafana_data:
   postgres_data:
-  mongodb_data:
-  mlflow_data:

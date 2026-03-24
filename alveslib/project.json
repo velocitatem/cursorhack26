@@ -7,25 +7,25 @@
     "build": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "python3.12 -m compileall alveslib"
+        "command": "uv run python -m compileall alveslib"
       }
     },
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": ".venv/bin/ruff check alveslib"
+        "command": "uv run ruff check alveslib"
       }
     },
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": ".venv/bin/mypy alveslib"
+        "command": "uv run mypy alveslib"
       }
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": ".venv/bin/pytest alveslib -v"
+        "command": "uv run pytest alveslib -v"
       }
     }
   }

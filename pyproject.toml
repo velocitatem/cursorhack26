@@ -10,14 +10,17 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "anthropic",
+  "authlib>=1.6.9",
   "celery[redis]",
   "fastapi",
+  "itsdangerous>=2.2.0",
   "opentelemetry-api",
   "opentelemetry-exporter-otlp-proto-http",
   "opentelemetry-instrumentation-fastapi",
   "opentelemetry-instrumentation-logging",
   "opentelemetry-instrumentation-requests",
   "opentelemetry-sdk",
+  "psycopg[binary]>=3.3.3",
   "pydantic",
   "python-dotenv",
   "redis",
