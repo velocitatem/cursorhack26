@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from io import BytesIO
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from models.story import (
     AdvanceSceneRequest,
@@ -20,6 +22,12 @@ from models.story import (
     TraceStep,
 )
 from services.scene_builder import build_scene, resolve_emails
+from services.tts import (
+    ensure_scene_entry,
+    generate_and_cache_scene_tts,
+    get_scene_entry,
+    scene_tts_url,
+)
 
 router = APIRouter(prefix="/story/scene", tags=["story"])
 log = logging.getLogger(__name__)
@@ -63,7 +71,44 @@ async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) ->
     return await asyncio.to_thread(build_scene, emails, trace)
 
 
-async def _preload_next(session: StorySession, scene: Scene) -> None:
+def _attach_scene_tts(session_id: str, scene: Scene) -> Scene:
+    entry = ensure_scene_entry(session_id=session_id, scene_id=scene.scene_id)
+    scene.tts = scene_tts_url(session_id=session_id, scene_id=scene.scene_id)
+    scene.voice_id = entry.voice_id
+    return scene
+
+
+async def _generate_scene_tts_task(session_id: str, scene: Scene) -> None:
+    try:
+        await asyncio.to_thread(
+            generate_and_cache_scene_tts,
+            session_id,
+            scene.scene_id,
+            scene.dialogue,
+        )
+    except Exception:
+        log.warning(
+            "scene_tts_generation_failed session_id=%s scene_id=%s",
+            session_id,
+            scene.scene_id,
+            exc_info=True,
+        )
+
+
+def _start_scene_tts_generation(session_id: str, scene: Scene) -> None:
+    asyncio.create_task(_generate_scene_tts_task(session_id=session_id, scene=scene))
+
+
+def _find_scene_dialogue(session: StorySession, scene_id: str) -> str | None:
+    if session.current_scene and session.current_scene.scene_id == scene_id:
+        return session.current_scene.dialogue
+    for preloaded in session.preloaded_by_choice.values():
+        if preloaded.scene_id == scene_id:
+            return preloaded.dialogue
+    return None
+
+
+async def _preload_next(session_id: str, session: StorySession, scene: Scene) -> None:
     if scene.is_terminal or not scene.choices:
         return
     preload_results: dict[str, Scene] = {}
@@ -77,7 +122,10 @@ async def _preload_next(session: StorySession, scene: Scene) -> None:
             related_email_ids=scene.related_email_ids,
         )]
         try:
-            preload_results[choice.slug] = await _build_scene_async(session.emails, trace)
+            preload_scene = await _build_scene_async(session.emails, trace)
+            _attach_scene_tts(session_id=session_id, scene=preload_scene)
+            preload_results[choice.slug] = preload_scene
+            _start_scene_tts_generation(session_id=session_id, scene=preload_scene)
         except Exception:
             log.warning(
                 "preload_scene_failed scene_id=%s choice_slug=%s",
@@ -105,13 +153,15 @@ async def start_scene(request: StartSceneRequest) -> StartSceneResponse:
             detail=f"Failed to generate first scene: {exc}",
         ) from exc
     session_id = str(uuid4())
+    _attach_scene_tts(session_id=session_id, scene=first_scene)
     session = StorySession(emails=emails, current_scene=first_scene)
     SESSIONS[session_id] = session
     log.info(
         "start_scene session_id=%s email_count=%s scene_id=%s terminal=%s",
         session_id, len(emails), first_scene.scene_id, first_scene.is_terminal,
     )
-    asyncio.create_task(_preload_next(session, first_scene))
+    _start_scene_tts_generation(session_id=session_id, scene=first_scene)
+    asyncio.create_task(_preload_next(session_id, session, first_scene))
     return StartSceneResponse(session_id=session_id, scene=first_scene, trace=[], done=first_scene.is_terminal)
 
 
@@ -162,12 +212,15 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
     else:
         log.info("advance_scene_cache_hit session_id=%s", session_id)
 
+    _attach_scene_tts(session_id=session_id, scene=next_scene)
+
     async with session.lock:
         session.trace = next_trace
         session.current_scene = next_scene
         session.preloaded_by_choice = {}
 
-    asyncio.create_task(_preload_next(session, next_scene))
+    _start_scene_tts_generation(session_id=session_id, scene=next_scene)
+    asyncio.create_task(_preload_next(session_id, session, next_scene))
     log.info(
         "advance_scene session_id=%s scene_id=%s done=%s trace_len=%s",
         session_id, next_scene.scene_id, next_scene.is_terminal, len(next_trace),
@@ -202,3 +255,37 @@ async def resolve_scene(session_id: str, request: ResolveSceneRequest | None = N
         ) from exc
     log.info("resolve_scene_ok session_id=%s drafts=%s", session_id, len(drafts))
     return ResolveResponse(session_id=session_id, drafts=drafts)
+
+
+@router.get("/{session_id}/{scene_id}/tts")
+async def stream_scene_tts(session_id: str, scene_id: str):
+    session = SESSIONS.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
+    if entry is None:
+        dialogue = _find_scene_dialogue(session=session, scene_id=scene_id)
+        if dialogue is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scene not found for this session.")
+        try:
+            await asyncio.to_thread(generate_and_cache_scene_tts, session_id, scene_id, dialogue)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to generate scene audio: {exc}",
+            ) from exc
+        entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TTS cache unavailable.")
+    if entry.status == "ready" and entry.audio_bytes:
+        return StreamingResponse(BytesIO(entry.audio_bytes), media_type="audio/mpeg")
+    if entry.status == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"TTS generation failed: {entry.error or 'provider_error'}",
+        )
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"status": "pending"},
+        headers={"Retry-After": "1"},
+    )
