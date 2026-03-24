@@ -53,7 +53,7 @@ const createNameplate = (label: string) => {
   })
   const sprite = new THREE.Sprite(material)
   sprite.scale.set(2.8, 0.7, 1)
-  sprite.position.set(0, 2.65, 0)
+  sprite.position.set(0, 2.15, 0)
   return sprite
 }
 
@@ -88,24 +88,25 @@ export const createVoxelCharacter = (
   const body = createPart([0.82, 0.95, 0.44], shirtColor, [0, 1.15, 0])
   const leftArm = createPart([0.26, 0.92, 0.26], accentColor, [-0.6, 1.1, 0])
   const rightArm = createPart([0.26, 0.92, 0.26], accentColor, [0.6, 1.1, 0])
-  const leftLeg = createPart([0.3, 0.95, 0.3], pantsColor, [-0.2, 0.48, 0])
-  const rightLeg = createPart([0.3, 0.95, 0.3], pantsColor, [0.2, 0.48, 0])
-  const leftShoe = createPart([0.32, 0.18, 0.4], shoeColor, [-0.2, 0.09, 0.04])
-  const rightShoe = createPart([0.32, 0.18, 0.4], shoeColor, [0.2, 0.09, 0.04])
 
-  for (const mesh of [
-    head,
-    body,
-    leftArm,
-    rightArm,
-    leftLeg,
-    rightLeg,
-    leftShoe,
-    rightShoe,
-  ]) {
+  // legs use pivot groups so shoes rotate with the leg
+  const legTopY = 0.95
+  const leftLegPivot = new THREE.Group()
+  leftLegPivot.position.set(-0.2, legTopY, 0)
+  const leftLeg = createPart([0.3, 0.95, 0.3], pantsColor, [0, -0.475, 0])
+  const leftShoe = createPart([0.32, 0.18, 0.4], shoeColor, [0, -0.86, 0.04])
+  leftLegPivot.add(leftLeg, leftShoe)
+
+  const rightLegPivot = new THREE.Group()
+  rightLegPivot.position.set(0.2, legTopY, 0)
+  const rightLeg = createPart([0.3, 0.95, 0.3], pantsColor, [0, -0.475, 0])
+  const rightShoe = createPart([0.32, 0.18, 0.4], shoeColor, [0, -0.86, 0.04])
+  rightLegPivot.add(rightLeg, rightShoe)
+
+  for (const mesh of [head, body, leftArm, rightArm, leftLeg, rightLeg, leftShoe, rightShoe]) {
     register(mesh)
-    rig.add(mesh)
   }
+  rig.add(head, body, leftArm, rightArm, leftLegPivot, rightLegPivot)
 
   if (label) {
     group.add(label)
@@ -121,12 +122,12 @@ export const createVoxelCharacter = (
       const swing = Math.sin(elapsed * 9 + idleSeed) * 0.65 * walk
       const idleBob = Math.sin(elapsed * 3 + idleSeed) * (walk > 0 ? 0.05 : 0.025)
 
-      rig.position.y = idleBob
+      rig.position.y = -0.5 + idleBob
       head.rotation.y = Math.sin(elapsed * 0.75 + idleSeed) * 0.08
       leftArm.rotation.x = swing
       rightArm.rotation.x = -swing
-      leftLeg.rotation.x = -swing
-      rightLeg.rotation.x = swing
+      leftLegPivot.rotation.x = -swing
+      rightLegPivot.rotation.x = swing
     },
     setHighlight: (active: boolean) => {
       for (const material of highlightMaterials) {

@@ -7,9 +7,24 @@ import { useSceneLoader } from './game/story/useSceneLoader'
 import type { SceneNpc } from './game/story/types'
 
 function App() {
-  const { scene, isAdvancing, chooseOption } = useSceneLoader()
+  const {
+    mode,
+    sessionId,
+    scene,
+    trace,
+    drafts,
+    done,
+    error,
+    isStarting,
+    isAdvancing,
+    isResolving,
+    chooseOption,
+    resolveDrafts,
+    restart,
+  } = useSceneLoader()
   const { activeNpcId, activeNpc, visibleLine, isOpen, openDialogue, closeDialogue } =
     useDialogueState(scene)
+  const isBusy = isStarting || isAdvancing || isResolving
 
   const handleNpcInteract = useCallback(
     (npc: SceneNpc) => {
@@ -33,6 +48,15 @@ function App() {
     [activeNpc, chooseOption, closeDialogue],
   )
 
+  const handleResolve = useCallback(() => {
+    void resolveDrafts()
+  }, [resolveDrafts])
+
+  const handleRestart = useCallback(() => {
+    closeDialogue()
+    restart()
+  }, [closeDialogue, restart])
+
   return (
     <main className="app-shell">
       <WorldCanvas
@@ -41,6 +65,70 @@ function App() {
         activeNpcId={activeNpcId}
         onNpcInteract={handleNpcInteract}
       />
+
+      <section className="story-hud">
+        <div className="story-status-card">
+          <p className="eyebrow">Story route</p>
+          <h1 className="story-title">{scene.title}</h1>
+          <p className="story-objective">{scene.objective}</p>
+
+          <div className="story-meta">
+            <span>Mode: {mode}</span>
+            <span>Choices locked: {trace.length}</span>
+            <span>{sessionId ? 'Session live' : 'No session yet'}</span>
+          </div>
+
+          {scene.completionMessage ? (
+            <p className="story-completion">{scene.completionMessage}</p>
+          ) : null}
+
+          {error ? <p className="story-error">{error}</p> : null}
+
+          <div className="story-actions">
+            <button className="hud-button" onClick={handleRestart} type="button" disabled={isBusy}>
+              Restart run
+            </button>
+            <button
+              className="hud-button hud-button-primary"
+              onClick={handleResolve}
+              type="button"
+              disabled={!done || isBusy}
+            >
+              {isResolving ? 'Resolving drafts...' : drafts.length ? 'Refresh drafts' : 'Resolve drafts'}
+            </button>
+          </div>
+
+          {isStarting ? <p className="story-note">Loading the first scene from the story service.</p> : null}
+          {!done && !isStarting ? (
+            <p className="story-note">Walk up to the active NPC and press `E` to lock in a route.</p>
+          ) : null}
+        </div>
+
+        {(done || drafts.length > 0) ? (
+          <div className="drafts-card">
+            <div className="drafts-header">
+              <div>
+                <p className="eyebrow">Resolve output</p>
+                <h2>Draft bundle</h2>
+              </div>
+            </div>
+
+            {drafts.length ? (
+              <div className="draft-list">
+                {drafts.map(draft => (
+                  <article className="draft-item" key={draft.email_id}>
+                    <p className="draft-to">To: {draft.to}</p>
+                    <h3>{draft.subject}</h3>
+                    <p>{draft.body}</p>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="story-note">The route is complete. Resolve the bundle to preview the final drafts.</p>
+            )}
+          </div>
+        ) : null}
+      </section>
 
       <DialogueOverlay
         npc={activeNpc}

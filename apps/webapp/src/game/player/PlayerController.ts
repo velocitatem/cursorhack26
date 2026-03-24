@@ -132,7 +132,7 @@ export class PlayerController {
   }
 
   getFocusPoint(target = new THREE.Vector3()) {
-    return target.copy(this.group.position).add(new THREE.Vector3(0, 1.4, 0))
+    return target.copy(this.group.position).add(new THREE.Vector3(0, 0.9, 0))
   }
 
   getForwardVector(target = new THREE.Vector3()) {
