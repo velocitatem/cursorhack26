@@ -10,11 +10,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "anthropic",
-  "beautifulsoup4",
   "celery[redis]",
   "fastapi",
-  "flask",
-  "flask-cors",
   "opentelemetry-api",
   "opentelemetry-exporter-otlp-proto-http",
   "opentelemetry-instrumentation-fastapi",
@@ -23,19 +20,17 @@ dependencies = [
   "opentelemetry-sdk",
   "pydantic",
   "python-dotenv",
-  "pyyaml",
   "redis",
   "requests",
-  "seleniumbase",
-  "streamlit",
-  "tensorboard",
-  "torch",
-  "tqdm",
   "uvicorn[standard]",
 ]
 
 [project.optional-dependencies]
+flask = ["flask", "flask-cors"]
+ml = ["tensorboard", "torch"]
 mlflow = ["mlflow"]
+scraping = ["beautifulsoup4", "seleniumbase"]
+webapp-minimal = ["streamlit"]
 
 [dependency-groups]
 dev = [

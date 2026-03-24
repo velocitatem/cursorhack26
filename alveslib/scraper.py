@@ -1,10 +1,17 @@
+from __future__ import annotations
+
 import hashlib
 import pickle
 import os
 from pathlib import Path
-from seleniumbase import SB
-from bs4 import BeautifulSoup
 from typing import Optional
+
+try:
+    from bs4 import BeautifulSoup
+    from seleniumbase import SB
+except ImportError:
+    BeautifulSoup = None
+    SB = None
 
 class ScraperCache:
     def __init__(self, cache_dir: str = ".scraper_cache"):
@@ -42,6 +49,8 @@ class ScraperCache:
 _cache = ScraperCache() # glob
 
 def scrape_url(url: str, use_cache: bool = True) -> BeautifulSoup:
+    if SB is None or BeautifulSoup is None:
+        raise ImportError("Install scraping extras: pip install .[scraping]")
     if use_cache:
         cached_soup = _cache.get(url)
         if cached_soup:
