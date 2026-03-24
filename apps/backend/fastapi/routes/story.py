@@ -12,6 +12,7 @@ from models.story import (
     AdvanceSceneRequest,
     AdvanceSceneResponse,
     EmailItem,
+    ResolveSceneRequest,
     ResolveResponse,
     Scene,
     StartSceneRequest,
@@ -72,6 +73,7 @@ async def _preload_next(session: StorySession, scene: Scene) -> None:
             npc_id=scene.npc_id,
             choice_slug=choice.slug,
             choice_intent=choice.intent,
+            choice_context="",
             related_email_ids=scene.related_email_ids,
         )]
         try:
@@ -141,6 +143,7 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
         npc_id=current_scene.npc_id,
         choice_slug=chosen.slug,
         choice_intent=chosen.intent,
+        choice_context=request.choice_context.strip(),
         related_email_ids=current_scene.related_email_ids,
     )
     next_trace = [*session.trace, step]
@@ -173,7 +176,7 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
 
 
 @router.post("/{session_id}/resolve", response_model=ResolveResponse)
-async def resolve_scene(session_id: str) -> ResolveResponse:
+async def resolve_scene(session_id: str, request: ResolveSceneRequest | None = None) -> ResolveResponse:
     """After the story ends, turn the full trace into actual email reply drafts."""
     session = SESSIONS.get(session_id)
     if session is None:
@@ -184,7 +187,13 @@ async def resolve_scene(session_id: str) -> ResolveResponse:
             detail="No choices recorded yet — play through the story first.",
         )
     try:
-        drafts = await asyncio.to_thread(resolve_emails, session.emails, session.trace)
+        drafts = await asyncio.to_thread(
+            resolve_emails,
+            session.emails,
+            session.trace,
+            request.user_context if request else "",
+            request.email_context_by_id if request else None,
+        )
     except Exception as exc:
         log.exception("resolve_scene_failed session_id=%s", session_id)
         raise HTTPException(

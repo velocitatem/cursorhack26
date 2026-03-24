@@ -46,6 +46,7 @@ class StartSceneRequest(BaseModel):
 
 class AdvanceSceneRequest(BaseModel):
     choice_slug: str = Field(min_length=1)
+    choice_context: str = ""
 
 
 class TraceStep(BaseModel):
@@ -53,6 +54,7 @@ class TraceStep(BaseModel):
     npc_id: str = ""
     choice_slug: str
     choice_intent: str = "neutral"
+    choice_context: str = ""
     related_email_ids: list[str] = Field(default_factory=list)
 
 
@@ -79,3 +81,10 @@ class EmailDraft(BaseModel):
 class ResolveResponse(BaseModel):
     session_id: str
     drafts: list[EmailDraft]
+
+
+class ResolveSceneRequest(BaseModel):
+    # Global context applied to all drafted replies (e.g. "timeline is 6 weeks, budget cap is 20k")
+    user_context: str = ""
+    # Per-email context keyed by email id for precise facts (pricing, constraints, owners, etc.)
+    email_context_by_id: dict[str, str] = Field(default_factory=dict)

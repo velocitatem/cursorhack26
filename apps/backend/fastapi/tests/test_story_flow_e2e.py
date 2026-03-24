@@ -76,12 +76,15 @@ def test_story_scene_flow_end_to_end(monkeypatch):
             }
         )
 
-    def fake_resolve_emails(emails, trace):
+    def fake_resolve_emails(emails, trace, user_context="", email_context_by_id=None):
         assert len(trace) == 1
         assert trace[0].scene_id == "scene-1"
         assert trace[0].choice_slug == "agree-fast"
         assert trace[0].choice_intent == "agree_immediately"
+        assert trace[0].choice_context == "timeline 6 weeks, budget 20k max"
         assert trace[0].related_email_ids == ["email-1"]
+        assert "budget cap 20k" in user_context
+        assert (email_context_by_id or {}).get("email-2") == "timeline is 6 weeks"
         return [
             EmailDraft(
                 email_id="email-1",
@@ -116,7 +119,10 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     session_id = start_json["session_id"]
     advance = client.post(
         f"/story/scene/{session_id}/advance",
-        json={"choice_slug": "agree-fast"},
+        json={
+            "choice_slug": "agree-fast",
+            "choice_context": "timeline 6 weeks, budget 20k max",
+        },
     )
     assert advance.status_code == 200
     advance_json = advance.json()
@@ -124,9 +130,16 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     assert advance_json["scene"]["is_terminal"] is True
     assert len(advance_json["trace"]) == 1
     assert advance_json["trace"][0]["choice_intent"] == "agree_immediately"
+    assert advance_json["trace"][0]["choice_context"] == "timeline 6 weeks, budget 20k max"
     assert advance_json["trace"][0]["related_email_ids"] == ["email-1"]
 
-    resolve = client.post(f"/story/scene/{session_id}/resolve")
+    resolve = client.post(
+        f"/story/scene/{session_id}/resolve",
+        json={
+            "user_context": "pricing constraints: budget cap 20k",
+            "email_context_by_id": {"email-2": "timeline is 6 weeks"},
+        },
+    )
     assert resolve.status_code == 200
     resolve_json = resolve.json()
     assert resolve_json["session_id"] == session_id

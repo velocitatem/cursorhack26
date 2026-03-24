@@ -81,22 +81,28 @@ RESOLVE_JSON_SCHEMA: dict[str, Any] = {
 
 # Instructs the LLM to cast each email sender as a Minecraft NPC and tag
 # every choice with a concrete reply intent so resolve_emails can use it.
-SCENE_SYSTEM_PROMPT = """You are a game master turning a user's email inbox into a Minecraft RPG.
+SCENE_SYSTEM_PROMPT = """You are a game master turning a user's email inbox into a Minecraft office-RPG.
 
 Rules:
 - Each NPC *is* one of the email senders. npc_id must equal the email id it covers.
-  npc_name should be a fun fantasy/Minecraft re-skin of the sender (e.g. "Manager Steve",
-  "Client the Merchant").
-- The NPC's dialogue retells the email's request in-world, keeping the actual stakes clear.
+  npc_name should be a fun Minecraft/work re-skin of the sender (e.g. "Manager Steve",
+  "Client Builder", "Ops Villager").
+- Dialogue must stay clear and readable:
+  1) First sentence must be plain context in modern language (no roleplay terms), including
+     what the sender wants and by when if timing exists.
+  2) Second sentence can add light in-world flavor.
+  Do not use archaic or theatrical wording like "hail, traveler, quest, sundown's last light".
+- Always preserve concrete context from the email (request, urgency, timeline, pricing, etc.).
 - related_email_ids must list every email id this scene covers.
 - Each choice must include an `intent` field: a short snake_case keyword that captures how
   the player would reply to the real email (e.g. "agree_immediately", "polite_decline",
   "ask_for_more_time", "deflect_to_colleague", "enthusiastic_yes", "rude_dismissal").
-  The label shown to the player can be fun/game-like but intent must be business-accurate.
+  The label should be direct and action-first (e.g. "Send update now", "Ask for more time").
+- Avoid repetitive wording across scenes; vary phrasing and sentence openings.
 - One choice per scene should always be a wildcard / comedic option.
 - If constraints.should_end_now is true, produce a terminal scene wrapping up the story.
   Terminal scenes have empty choices and is_terminal=true.
-- Keep dialogue under 3 sentences. Keep choice labels under 6 words.
+- Keep dialogue to exactly 2 sentences. Keep choice labels under 6 words.
 """
 
 RESOLVE_SYSTEM_PROMPT = """You are an email assistant. Given a list of original emails and the
@@ -106,6 +112,9 @@ email in the inbox.
 
 Map each trace step's `related_email_ids` + `choice_intent` to the correct email and compose a
 fitting reply. If multiple trace steps cover the same email, combine the intents.
+Use `user_context` and `email_context_by_id` as factual constraints whenever present, especially
+for concrete numbers like timeline, pricing, discounts, budget caps, and delivery windows.
+Never invent hard numbers if context is missing; keep those parts high-level instead.
 
 Return one draft per email. `subject` should be "Re: <original subject>".
 Keep replies concise (2-4 sentences). Match the intent faithfully — if intent is
@@ -164,7 +173,7 @@ def build_scene(
             {"role": "user", "content": _build_scene_prompt(emails, trace, max_scenes)},
         ],
         "response_format": {"type": "json_schema", "json_schema": SCENE_JSON_SCHEMA},
-        "temperature": 0.8,
+        "temperature": 0.6,
     })
     scene = _parse_scene(json.loads(data["choices"][0]["message"]["content"]))
     log.info(
@@ -174,15 +183,23 @@ def build_scene(
     return scene
 
 
-def resolve_emails(emails: list[EmailItem], trace: list[TraceStep]) -> list[EmailDraft]:
+def resolve_emails(
+    emails: list[EmailItem],
+    trace: list[TraceStep],
+    user_context: str = "",
+    email_context_by_id: dict[str, str] | None = None,
+) -> list[EmailDraft]:
     """Turn completed story trace + original emails into actual reply drafts."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set")
+    email_context_by_id = email_context_by_id or {}
     payload = json.dumps(
         {
             "emails": [e.model_dump() for e in emails],
             "trace": [t.model_dump() for t in trace],
+            "user_context": user_context,
+            "email_context_by_id": email_context_by_id,
         },
         ensure_ascii=True,
     )
