@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ from typing import Any
 import requests
 
 from models.story import EmailDraft, EmailItem, Scene, TraceStep
+from services.cache import get_json, openai_cache_ttl_seconds, set_json
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +124,15 @@ Keep replies concise (2-4 sentences). Match the intent faithfully — if intent 
 """
 
 
+def _cache_enabled() -> bool:
+    return os.getenv("OPENAI_CACHE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def _cache_key(prefix: str, payload: dict[str, Any]) -> str:
+    serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return f"openai:{prefix}:{hashlib.sha256(serialized.encode('utf-8')).hexdigest()}"
+
+
 def _openai_post(api_key: str, body: dict[str, Any]) -> dict[str, Any]:
     response = requests.post(
         OPENAI_URL,
@@ -166,7 +177,7 @@ def build_scene(
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set")
-    data = _openai_post(api_key, {
+    body = {
         "model": OPENAI_MODEL,
         "messages": [
             {"role": "system", "content": SCENE_SYSTEM_PROMPT},
@@ -174,8 +185,18 @@ def build_scene(
         ],
         "response_format": {"type": "json_schema", "json_schema": SCENE_JSON_SCHEMA},
         "temperature": 0.6,
-    })
+    }
+    cache_key = _cache_key(prefix="scene", payload=body)
+    if _cache_enabled():
+        cached_scene = get_json(cache_key)
+        if isinstance(cached_scene, dict):
+            scene = Scene.model_validate(cached_scene)
+            log.info("openai_scene_cache_hit scene_id=%s", scene.scene_id)
+            return scene
+    data = _openai_post(api_key, body)
     scene = _parse_scene(json.loads(data["choices"][0]["message"]["content"]))
+    if _cache_enabled():
+        set_json(cache_key, scene.model_dump(), ttl_seconds=openai_cache_ttl_seconds())
     log.info(
         "openai_scene_ok scene_id=%s terminal=%s choices=%s",
         scene.scene_id, scene.is_terminal, len(scene.choices),
@@ -194,16 +215,17 @@ def resolve_emails(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set")
     email_context_by_id = email_context_by_id or {}
+    payload_obj = {
+        "emails": [e.model_dump() for e in emails],
+        "trace": [t.model_dump() for t in trace],
+        "user_context": user_context,
+        "email_context_by_id": email_context_by_id,
+    }
     payload = json.dumps(
-        {
-            "emails": [e.model_dump() for e in emails],
-            "trace": [t.model_dump() for t in trace],
-            "user_context": user_context,
-            "email_context_by_id": email_context_by_id,
-        },
+        payload_obj,
         ensure_ascii=True,
     )
-    data = _openai_post(api_key, {
+    body = {
         "model": OPENAI_MODEL,
         "messages": [
             {"role": "system", "content": RESOLVE_SYSTEM_PROMPT},
@@ -211,8 +233,18 @@ def resolve_emails(
         ],
         "response_format": {"type": "json_schema", "json_schema": RESOLVE_JSON_SCHEMA},
         "temperature": 0.4,
-    })
+    }
+    cache_key = _cache_key(prefix="resolve", payload=body)
+    if _cache_enabled():
+        cached_result = get_json(cache_key)
+        if isinstance(cached_result, dict) and isinstance(cached_result.get("drafts"), list):
+            drafts = [EmailDraft.model_validate(d) for d in cached_result["drafts"]]
+            log.info("resolve_emails_cache_hit draft_count=%s", len(drafts))
+            return drafts
+    data = _openai_post(api_key, body)
     result = json.loads(data["choices"][0]["message"]["content"])
+    if _cache_enabled():
+        set_json(cache_key, result, ttl_seconds=openai_cache_ttl_seconds())
     drafts = [EmailDraft.model_validate(d) for d in result["drafts"]]
     log.info("resolve_emails_ok draft_count=%s", len(drafts))
     return drafts
