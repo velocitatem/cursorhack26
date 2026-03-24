@@ -9,31 +9,31 @@
       "executor": "nx:run-commands",
       "options": {
         "cwd": "apps/backend/fastapi",
-        "command": "python3.12 server.py"
+        "command": "uv run python server.py"
       }
     },
     "build": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "python3.12 -m compileall apps/backend/fastapi"
+        "command": "uv run python -m compileall apps/backend/fastapi"
       }
     },
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": ".venv/bin/ruff check apps/backend/fastapi"
+        "command": "uv run ruff check apps/backend/fastapi"
       }
     },
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": ".venv/bin/mypy apps/backend/fastapi"
+        "command": "uv run mypy apps/backend/fastapi"
       }
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": ".venv/bin/pytest apps/backend/fastapi -v"
+        "command": "uv run pytest apps/backend/fastapi -v"
       }
     }
   }

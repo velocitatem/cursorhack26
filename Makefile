@@ -2,7 +2,7 @@
 .PHONY: help init bootstrap venv deps lock envlink fmt lint type test clean doctor
 .PHONY: up down logs ps rebuild
 .PHONY: dev run.webapp run.webapp.simple run.backend run.worker run.ml
-.PHONY: lift lift.minio lift.tensorboard lift.mlflow lift.logging lift.telemetry lift.database
+.PHONY: lift
 .PHONY: etl train infer seed
 .PHONY: nx.graph nx.projects nx.affected
 .DEFAULT_GOAL := help
@@ -74,8 +74,8 @@ test: venv ## Run pytest
 
 ## ── Docker ───────────────────────────────────────────────────────────────────
 
-up: ## Start core services (redis, backend-fastapi, ml-inference, worker)
-	@docker compose up -d redis backend-fastapi worker
+up: ## Start local backend dependencies (redis, postgres, backend-fastapi)
+	@docker compose up -d redis postgres backend-fastapi
 
 down: ## Stop all services
 	@docker compose down
@@ -89,33 +89,9 @@ ps: ## Show service status
 rebuild: ## Rebuild + restart all services (no cache)
 	@docker compose build --no-cache && docker compose up -d
 
-## ── Service Profiles ─────────────────────────────────────────────────────────
+## ── Service Aliases ──────────────────────────────────────────────────────────
 
 lift: up ## Alias for 'up'
-
-lift.tensorboard: ## Start TensorBoard
-	@docker compose --profile tensorboard up -d
-	@echo "TensorBoard: http://localhost:6006"
-
-lift.mlflow: ## Start optional MLflow tracking server
-	@docker compose --profile mlflow up -d
-	@echo "MLflow: http://localhost:5000"
-
-lift.logging: ## Start Loki + Grafana logging stack
-	@docker compose --profile logging up -d
-	@if [ -f .env ]; then . ./.env 2>/dev/null; fi; \
-	echo "Grafana: http://localhost:$${GRAFANA_PORT:-3000} (admin/admin)"; \
-	echo "Loki:    http://localhost:$${LOKI_PORT:-3100}"
-
-lift.telemetry: ## Start Jaeger OTLP + UI
-	@docker compose --profile telemetry up -d
-	@if [ -f .env ]; then . ./.env 2>/dev/null; fi; \
-	echo "Jaeger UI: http://localhost:$${JAEGER_UI_PORT:-16686}"; \
-	echo "OTLP HTTP: http://localhost:$${OTEL_HTTP_PORT:-4318}"; \
-	echo "OTLP gRPC: localhost:$${OTEL_GRPC_PORT:-4317}"
-
-lift.database: ## Start database services (postgres/mongodb)
-	@docker compose --profile database up -d
 
 ## ── Run Applications ─────────────────────────────────────────────────────────
 
@@ -182,7 +158,7 @@ help: ## Show this help
 	@echo "  Quick start:"
 	@echo "    make init         - First-time setup"
 	@echo "    make dev          - Start Next.js webapp"
-	@echo "    make up           - Start Docker services"
+	@echo "    make up           - Start local backend services"
 	@echo ""
 	@grep -E '^[a-zA-Z_.%-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'

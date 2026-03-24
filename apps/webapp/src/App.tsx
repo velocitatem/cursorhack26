@@ -1,5 +1,7 @@
 import { useCallback, useEffect } from 'react'
 import './App.css'
+import { AuthGate } from './auth/AuthGate'
+import { useSession } from './auth/useSession'
 import { DialogueOverlay } from './components/DialogueOverlay'
 import { WorldCanvas } from './components/WorldCanvas'
 import { useDialogueAudio } from './game/story/useDialogueAudio'
@@ -7,7 +9,13 @@ import { useDialogueState } from './game/story/useDialogueState'
 import { useSceneLoader } from './game/story/useSceneLoader'
 import type { SceneNpc } from './game/story/types'
 
-function App() {
+function GameShell({
+  userLabel,
+  onLogout,
+}: {
+  userLabel: string
+  onLogout: () => Promise<void>
+}) {
   const {
     mode,
     sessionId,
@@ -83,6 +91,16 @@ function App() {
 
   return (
     <main className="app-shell">
+      <div className="session-pill">
+        <span className="session-initial">{userLabel[0]}</span>
+        <span className="session-details">
+          <span className="session-user">{userLabel}</span>
+          <button className="session-logout" type="button" onClick={() => void onLogout()}>
+            Logout
+          </button>
+        </span>
+      </div>
+
       <WorldCanvas
         scene={scene}
         dialogueOpen={isOpen}
@@ -128,7 +146,7 @@ function App() {
           ) : null}
         </div>
 
-        {(done || drafts.length > 0) ? (
+        {done || drafts.length > 0 ? (
           <div className="drafts-card">
             <div className="drafts-header">
               <div>
@@ -165,6 +183,28 @@ function App() {
       />
     </main>
   )
+}
+
+function App() {
+  const { session, isLoading, authError, beginGoogleLogin, logout } = useSession()
+
+  if (isLoading) {
+    return (
+      <main className="loading-shell">
+        <p className="auth-kicker">Booting</p>
+        <h1 className="auth-title">Checking your session.</h1>
+        <p className="auth-copy">Validating login.</p>
+      </main>
+    )
+  }
+
+  if (!session.authenticated) {
+    return <AuthGate authError={authError} onContinue={beginGoogleLogin} />
+  }
+
+  const userLabel = session.user?.name ?? session.user?.email ?? 'Player'
+
+  return <GameShell userLabel={userLabel} onLogout={logout} />
 }
 
 export default App
