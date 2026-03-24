@@ -8,12 +8,15 @@ class EmailItem(BaseModel):
     sender: str
     subject: str
     snippet: str = ""
+    body: str = ""
     thread_id: str | None = None
 
 
 class SceneChoice(BaseModel):
     slug: str = Field(min_length=1)
     label: str = Field(min_length=1)
+    # short keyword surfaced to the email-drafting LLM (e.g. "polite_decline", "agree", "defer")
+    intent: str = Field(min_length=1, default="neutral")
 
 
 class Scene(BaseModel):
@@ -47,7 +50,10 @@ class AdvanceSceneRequest(BaseModel):
 
 class TraceStep(BaseModel):
     scene_id: str
+    npc_id: str = ""
     choice_slug: str
+    choice_intent: str = "neutral"
+    related_email_ids: list[str] = Field(default_factory=list)
 
 
 class StartSceneResponse(BaseModel):
@@ -61,3 +67,15 @@ class AdvanceSceneResponse(BaseModel):
     scene: Scene
     trace: list[TraceStep]
     done: bool
+
+
+class EmailDraft(BaseModel):
+    email_id: str
+    to: str
+    subject: str
+    body: str
+
+
+class ResolveResponse(BaseModel):
+    session_id: str
+    drafts: list[EmailDraft]

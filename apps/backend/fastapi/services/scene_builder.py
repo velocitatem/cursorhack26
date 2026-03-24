@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from models.story import EmailItem, Scene, TraceStep
+from models.story import EmailDraft, EmailItem, Scene, TraceStep
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +33,9 @@ SCENE_JSON_SCHEMA: dict[str, Any] = {
                     "properties": {
                         "slug": {"type": "string"},
                         "label": {"type": "string"},
+                        "intent": {"type": "string"},
                     },
-                    "required": ["slug", "label"],
+                    "required": ["slug", "label", "intent"],
                 },
             },
             "is_terminal": {"type": "boolean"},
@@ -52,32 +53,99 @@ SCENE_JSON_SCHEMA: dict[str, Any] = {
     },
 }
 
+RESOLVE_JSON_SCHEMA: dict[str, Any] = {
+    "name": "resolve_schema",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "drafts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "email_id": {"type": "string"},
+                        "to": {"type": "string"},
+                        "subject": {"type": "string"},
+                        "body": {"type": "string"},
+                    },
+                    "required": ["email_id", "to", "subject", "body"],
+                },
+            }
+        },
+        "required": ["drafts"],
+    },
+}
 
-def _build_prompt(
-    emails: list[EmailItem],
-    trace: list[TraceStep],
-    max_scenes: int,
-) -> str:
-    trace_payload = [step.model_dump() for step in trace]
-    email_payload = [email.model_dump() for email in emails]
+# Instructs the LLM to cast each email sender as a Minecraft NPC and tag
+# every choice with a concrete reply intent so resolve_emails can use it.
+SCENE_SYSTEM_PROMPT = """You are a game master turning a user's email inbox into a Minecraft RPG.
+
+Rules:
+- Each NPC *is* one of the email senders. npc_id must equal the email id it covers.
+  npc_name should be a fun fantasy/Minecraft re-skin of the sender (e.g. "Manager Steve",
+  "Client the Merchant").
+- The NPC's dialogue retells the email's request in-world, keeping the actual stakes clear.
+- related_email_ids must list every email id this scene covers.
+- Each choice must include an `intent` field: a short snake_case keyword that captures how
+  the player would reply to the real email (e.g. "agree_immediately", "polite_decline",
+  "ask_for_more_time", "deflect_to_colleague", "enthusiastic_yes", "rude_dismissal").
+  The label shown to the player can be fun/game-like but intent must be business-accurate.
+- One choice per scene should always be a wildcard / comedic option.
+- If constraints.should_end_now is true, produce a terminal scene wrapping up the story.
+  Terminal scenes have empty choices and is_terminal=true.
+- Keep dialogue under 3 sentences. Keep choice labels under 6 words.
+"""
+
+RESOLVE_SYSTEM_PROMPT = """You are an email assistant. Given a list of original emails and the
+choices a user made while playing a Minecraft RPG (each choice has a `choice_intent` that
+captures the user's intended reply tone/action), write a professional email reply for every
+email in the inbox.
+
+Map each trace step's `related_email_ids` + `choice_intent` to the correct email and compose a
+fitting reply. If multiple trace steps cover the same email, combine the intents.
+
+Return one draft per email. `subject` should be "Re: <original subject>".
+Keep replies concise (2-4 sentences). Match the intent faithfully — if intent is
+"rude_dismissal" still write a professional but very brief cold reply, not an enthusiastic one.
+"""
+
+
+def _openai_post(api_key: str, body: dict[str, Any]) -> dict[str, Any]:
+    response = requests.post(
+        OPENAI_URL,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=body,
+        timeout=60,
+    )
+    if response.status_code >= 400:
+        log.error("openai_http_error status=%s body_preview=%s", response.status_code, response.text[:500])
+        raise RuntimeError(f"OpenAI API error ({response.status_code}): {response.text}")
+    return response.json()
+
+
+def _build_scene_prompt(emails: list[EmailItem], trace: list[TraceStep], max_scenes: int) -> str:
     should_end = len(trace) >= max_scenes - 1
-    constraints = {
-        "max_scenes": max_scenes,
-        "current_depth": len(trace),
-        "should_end_now": should_end,
-        "choice_count": 3 if not should_end else 0,
-    }
     return json.dumps(
-        {"emails": email_payload, "trace": trace_payload, "constraints": constraints},
+        {
+            "emails": [e.model_dump() for e in emails],
+            "trace": [t.model_dump() for t in trace],
+            "constraints": {
+                "max_scenes": max_scenes,
+                "current_depth": len(trace),
+                "should_end_now": should_end,
+                "choice_count": 3 if not should_end else 0,
+            },
+        },
         ensure_ascii=True,
     )
 
 
 def _parse_scene(payload: dict[str, Any]) -> Scene:
-    choices = payload.get("choices", [])
     if payload.get("is_terminal"):
-        choices = []
-    payload["choices"] = choices
+        payload["choices"] = []
     return Scene.model_validate(payload)
 
 
@@ -88,53 +156,46 @@ def build_scene(
 ) -> Scene:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        log.error("openai_missing_key")
         raise RuntimeError("OPENAI_API_KEY is not set")
-    system_prompt = (
-        "You write short RPG-style email handling scenes. "
-        "Generate exactly one scene as strict JSON. "
-        "Keep responses concise for a fast demo. "
-        "If constraints.should_end_now is true, return a terminal scene."
-    )
-    body = {
+    data = _openai_post(api_key, {
         "model": OPENAI_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": _build_prompt(emails, trace, max_scenes)},
+            {"role": "system", "content": SCENE_SYSTEM_PROMPT},
+            {"role": "user", "content": _build_scene_prompt(emails, trace, max_scenes)},
         ],
         "response_format": {"type": "json_schema", "json_schema": SCENE_JSON_SCHEMA},
-        "temperature": 0.7,
-    }
-    log.debug(
-        "openai_request model=%s trace_depth=%s email_count=%s",
-        OPENAI_MODEL,
-        len(trace),
-        len(emails),
-    )
-    response = requests.post(
-        OPENAI_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=body,
-        timeout=60,
-    )
-    if response.status_code >= 400:
-        log.error(
-            "openai_http_error status=%s body_preview=%s",
-            response.status_code,
-            response.text[:500],
-        )
-        raise RuntimeError(f"OpenAI API error ({response.status_code}): {response.text}")
-    data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    parsed = json.loads(content)
-    scene = _parse_scene(parsed)
+        "temperature": 0.8,
+    })
+    scene = _parse_scene(json.loads(data["choices"][0]["message"]["content"]))
     log.info(
         "openai_scene_ok scene_id=%s terminal=%s choices=%s",
-        scene.scene_id,
-        scene.is_terminal,
-        len(scene.choices),
+        scene.scene_id, scene.is_terminal, len(scene.choices),
     )
     return scene
+
+
+def resolve_emails(emails: list[EmailItem], trace: list[TraceStep]) -> list[EmailDraft]:
+    """Turn completed story trace + original emails into actual reply drafts."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    payload = json.dumps(
+        {
+            "emails": [e.model_dump() for e in emails],
+            "trace": [t.model_dump() for t in trace],
+        },
+        ensure_ascii=True,
+    )
+    data = _openai_post(api_key, {
+        "model": OPENAI_MODEL,
+        "messages": [
+            {"role": "system", "content": RESOLVE_SYSTEM_PROMPT},
+            {"role": "user", "content": payload},
+        ],
+        "response_format": {"type": "json_schema", "json_schema": RESOLVE_JSON_SCHEMA},
+        "temperature": 0.4,
+    })
+    result = json.loads(data["choices"][0]["message"]["content"])
+    drafts = [EmailDraft.model_validate(d) for d in result["drafts"]]
+    log.info("resolve_emails_ok draft_count=%s", len(drafts))
+    return drafts
