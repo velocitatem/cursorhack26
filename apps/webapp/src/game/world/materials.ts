@@ -52,64 +52,62 @@ const wood = loadPixelTexture(
 const leaf = loadPixelTexture(
   '../../../../minecraft-threejs/src/static/textures/block/oak_leaves.png',
 )
-const sand = loadPixelTexture(
-  '../../../../minecraft-threejs/src/static/textures/block/sand.png',
-)
-const glass = loadPixelTexture(
-  '../../../../minecraft-threejs/src/static/textures/block/glass.png',
-)
 
-const createTexturedMaterial = (map: THREE.Texture, color?: number) =>
-  new THREE.MeshStandardMaterial({
-    map,
-    color,
-  })
+const mat = (map: THREE.Texture, color: number, roughness = 0.92, metalness = 0.04) =>
+  new THREE.MeshStandardMaterial({ map, color, roughness, metalness })
 
+// dark fantasy palette: all textures tinted toward muted earth tones
 const materials: MaterialRecord = {
   grass: [
-    createTexturedMaterial(grassSide),
-    createTexturedMaterial(grassSide),
-    createTexturedMaterial(grassTop),
-    createTexturedMaterial(dirt),
-    createTexturedMaterial(grassSide),
-    createTexturedMaterial(grassSide),
+    mat(grassSide, 0x2a3820),
+    mat(grassSide, 0x2a3820),
+    mat(grassTop, 0x253018),
+    mat(dirt, 0x1e1510),
+    mat(grassSide, 0x2a3820),
+    mat(grassSide, 0x2a3820),
   ],
-  dirt: createTexturedMaterial(dirt),
-  stone: createTexturedMaterial(stone),
+  dirt: mat(dirt, 0x1e1510),
+  stone: mat(stone, 0x464850, 0.95, 0.06),
   tree: [
-    createTexturedMaterial(treeSide),
-    createTexturedMaterial(treeSide),
-    createTexturedMaterial(treeTop),
-    createTexturedMaterial(treeTop),
-    createTexturedMaterial(treeSide),
-    createTexturedMaterial(treeSide),
+    mat(treeSide, 0x2a1c0c),
+    mat(treeSide, 0x2a1c0c),
+    mat(treeTop, 0x1e1508),
+    mat(treeTop, 0x1e1508),
+    mat(treeSide, 0x2a1c0c),
+    mat(treeSide, 0x2a1c0c),
   ],
-  wood: createTexturedMaterial(wood),
+  wood: mat(wood, 0x3a2010, 0.9, 0.04),
   leaf: new THREE.MeshStandardMaterial({
     map: leaf,
-    color: 0x75b34c,
+    color: 0x1e3015,
     transparent: true,
+    roughness: 0.95,
   }),
-  sand: createTexturedMaterial(sand),
+  sand: mat(dirt, 0x3a2e1a),
   glass: new THREE.MeshStandardMaterial({
-    map: glass,
+    color: 0x556678,
     transparent: true,
-    opacity: 0.75,
+    opacity: 0.65,
+    roughness: 0.1,
+    metalness: 0.3,
   }),
   plaza: new THREE.MeshStandardMaterial({
-    color: 0xa0a6b2,
-    roughness: 0.9,
-    metalness: 0.05,
+    color: 0x30303a,
+    roughness: 0.96,
+    metalness: 0.04,
   }),
   mail: new THREE.MeshStandardMaterial({
-    color: 0xf0b54a,
-    roughness: 0.7,
-    metalness: 0.15,
+    color: 0xa06830,
+    roughness: 0.72,
+    metalness: 0.22,
   }),
+  // torch glow - emissive orange
   accent: new THREE.MeshStandardMaterial({
-    color: 0x5fa8ff,
-    roughness: 0.55,
-    metalness: 0.1,
+    color: 0xff5500,
+    emissive: new THREE.Color(0xff3300),
+    emissiveIntensity: 1.4,
+    roughness: 0.5,
+    metalness: 0.0,
   }),
 }
 

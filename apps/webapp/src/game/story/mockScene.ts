@@ -6,7 +6,7 @@ export const mockScenes: Record<string, ScenePayload> = {
   'inbox-arrival': {
     sceneId: 'inbox-arrival',
     title: 'Inbox Arrival',
-    objective: 'Talk to the loudest emails first and pick the tone of the reply path.',
+    objective: 'Talk to the loudest emails first and walk into the door matching your reply path.',
     environment: {
       theme: 'inboxPlaza',
       spawn: { x: 0, y: 0, z: 8 },
@@ -27,24 +27,27 @@ export const mockScenes: Record<string, ScenePayload> = {
         choices: [
           {
             id: 'calm-status',
-            label: 'Calm status update',
+            label: 'Calm update',
             previewReply:
               'Share what shipped, note what is blocked, and reassure them the next step is already underway.',
             nextSceneId: 'follow-up-row',
+            doorPosition: { x: -8, y: 0, z: 6 },
           },
           {
             id: 'bold-status',
-            label: 'Bold shipped update',
+            label: 'Bold shipped',
             previewReply:
               'Lead with momentum, mention what landed, and frame the blocker as a fast follow instead of a crisis.',
             nextSceneId: 'follow-up-row',
+            doorPosition: { x: -5, y: 0, z: 6 },
           },
           {
             id: 'proactive-status',
-            label: 'Propose a sync',
+            label: 'Propose sync',
             previewReply:
               'Offer a short sync, summarize decisions in writing, and make the reply feel like progress instead of admin.',
             nextSceneId: 'follow-up-row',
+            doorPosition: { x: -2, y: 0, z: 6 },
           },
         ],
       },
@@ -67,6 +70,7 @@ export const mockScenes: Record<string, ScenePayload> = {
             previewReply:
               'Acknowledge the frustration, confirm the refund path, and give a simple timeline without sounding robotic.',
             nextSceneId: 'follow-up-row',
+            doorPosition: { x: -3, y: 0, z: -1 },
           },
           {
             id: 'refund-fix',
@@ -74,6 +78,7 @@ export const mockScenes: Record<string, ScenePayload> = {
             previewReply:
               'Suggest the fastest fix, keep the refund option open, and ask for one clear piece of information to unblock support.',
             nextSceneId: 'follow-up-row',
+            doorPosition: { x: 3, y: 0, z: -1 },
           },
         ],
       },
@@ -96,6 +101,7 @@ export const mockScenes: Record<string, ScenePayload> = {
             previewReply:
               'Confirm the amount, restate the due date, and ask for a short acknowledgement so the thread is moving again.',
             nextSceneId: 'follow-up-row',
+            doorPosition: { x: 3, y: 0, z: 6 },
           },
           {
             id: 'invoice-soft',
@@ -103,6 +109,7 @@ export const mockScenes: Record<string, ScenePayload> = {
             previewReply:
               'Keep it warm, assume good intent, and offer to resend the details so nobody has to search old attachments.',
             nextSceneId: 'follow-up-row',
+            doorPosition: { x: 7, y: 0, z: 6 },
           },
         ],
       },
@@ -132,10 +139,11 @@ export const mockScenes: Record<string, ScenePayload> = {
         choices: [
           {
             id: 'founder-brief',
-            label: 'Short and decisive',
+            label: 'Short, decisive',
             previewReply:
               'Answer with three lines: the decision, the reason, and the exact next step that is already scheduled.',
             nextSceneId: 'victory-lap',
+            doorPosition: { x: -9, y: 0, z: 2 },
           },
           {
             id: 'founder-context',
@@ -143,6 +151,7 @@ export const mockScenes: Record<string, ScenePayload> = {
             previewReply:
               'Add one paragraph of context, one tradeoff, and one explicit confidence signal so the reply feels grounded.',
             nextSceneId: 'victory-lap',
+            doorPosition: { x: -5, y: 0, z: 2 },
           },
         ],
       },
@@ -161,17 +170,19 @@ export const mockScenes: Record<string, ScenePayload> = {
         choices: [
           {
             id: 'design-yes',
-            label: 'Approve with boundaries',
+            label: 'Approve + limits',
             previewReply:
               'Say yes, keep the timeline protected, and pin the review to one narrow goal instead of a general polish round.',
             nextSceneId: 'victory-lap',
+            doorPosition: { x: -2, y: 0, z: 3 },
           },
           {
             id: 'design-fastlane',
-            label: 'Fast lane compromise',
+            label: 'Fast lane',
             previewReply:
               'Ask for the smallest revision that unblocks launch and promise a deeper pass only after the current milestone.',
             nextSceneId: 'victory-lap',
+            doorPosition: { x: 2, y: 0, z: 3 },
           },
         ],
       },
@@ -190,10 +201,11 @@ export const mockScenes: Record<string, ScenePayload> = {
         choices: [
           {
             id: 'sales-story',
-            label: 'Lead with their story',
+            label: 'Their story',
             previewReply:
               'Mirror the prospect pain point, connect it to one clear product benefit, and suggest a single next action.',
             nextSceneId: 'victory-lap',
+            doorPosition: { x: 5, y: 0, z: 2 },
           },
           {
             id: 'sales-proof',
@@ -201,6 +213,7 @@ export const mockScenes: Record<string, ScenePayload> = {
             previewReply:
               'Use one sharp example, keep the CTA light, and make the response feel personal rather than polished-for-everyone.',
             nextSceneId: 'victory-lap',
+            doorPosition: { x: 9, y: 0, z: 2 },
           },
         ],
       },
@@ -232,17 +245,19 @@ export const mockScenes: Record<string, ScenePayload> = {
         choices: [
           {
             id: 'celebrate',
-            label: 'Celebrate the clear inbox',
+            label: 'Celebrate',
             previewReply:
               'Show the trace, flash the celebration banner, and make the user feel like they just combo-chained the hardest threads.',
             nextSceneId: 'victory-lap',
+            doorPosition: { x: -3, y: 0, z: -3 },
           },
           {
             id: 'restart-run',
-            label: 'Run the inbox again',
+            label: 'Run again',
             previewReply:
               'Reset to the first plaza scene and let the player rehearse the flow before the real backend is wired in.',
             nextSceneId: 'inbox-arrival',
+            doorPosition: { x: 3, y: 0, z: -3 },
           },
         ],
       },

@@ -12,19 +12,19 @@ const createInteractHint = () => {
   if (!ctx) return null
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-  ctx.fillStyle = 'rgba(7, 11, 19, 0.82)'
+  ctx.fillStyle = 'rgba(8, 4, 16, 0.9)'
   ctx.beginPath()
-  ctx.roundRect(24, 8, canvas.width - 48, canvas.height - 16, 20)
+  ctx.roundRect(20, 8, canvas.width - 40, canvas.height - 16, 18)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(128, 196, 255, 0.52)'
+  ctx.strokeStyle = 'rgba(200, 140, 80, 0.72)'
   ctx.lineWidth = 3
   ctx.beginPath()
-  ctx.roundRect(24, 8, canvas.width - 48, canvas.height - 16, 20)
+  ctx.roundRect(20, 8, canvas.width - 40, canvas.height - 16, 18)
   ctx.stroke()
-  ctx.font = '600 38px Inter, system-ui, sans-serif'
+  ctx.font = '600 36px Inter, system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillStyle = '#cce6ff'
+  ctx.fillStyle = '#f5e0a0'
   ctx.fillText('Press E to talk', canvas.width / 2, canvas.height / 2)
 
   const texture = new THREE.CanvasTexture(canvas)

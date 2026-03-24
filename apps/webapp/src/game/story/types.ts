@@ -13,6 +13,8 @@ export type SceneChoice = {
   label: string
   previewReply: string
   nextSceneId?: string
+  doorPosition?: SceneVector
+  doorFacing?: number
 }
 
 export type SceneNpc = {

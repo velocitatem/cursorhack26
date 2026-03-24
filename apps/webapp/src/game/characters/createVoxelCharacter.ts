@@ -32,15 +32,19 @@ const createNameplate = (label: string) => {
   }
 
   context.clearRect(0, 0, canvas.width, canvas.height)
-  context.fillStyle = 'rgba(9, 12, 18, 0.78)'
-  context.fillRect(12, 20, canvas.width - 24, canvas.height - 40)
-  context.strokeStyle = 'rgba(255, 255, 255, 0.16)'
-  context.lineWidth = 4
-  context.strokeRect(12, 20, canvas.width - 24, canvas.height - 40)
-  context.font = '600 54px Inter, system-ui, sans-serif'
+  context.fillStyle = 'rgba(6, 3, 14, 0.92)'
+  context.beginPath()
+  context.roundRect(14, 18, canvas.width - 28, canvas.height - 36, 10)
+  context.fill()
+  context.strokeStyle = 'rgba(200, 140, 80, 0.75)'
+  context.lineWidth = 3.5
+  context.beginPath()
+  context.roundRect(14, 18, canvas.width - 28, canvas.height - 36, 10)
+  context.stroke()
+  context.font = '700 52px Inter, system-ui, sans-serif'
   context.textAlign = 'center'
   context.textBaseline = 'middle'
-  context.fillStyle = '#f8fafc'
+  context.fillStyle = '#f5e8c8'
   context.fillText(label, canvas.width / 2, canvas.height / 2)
 
   const texture = new THREE.CanvasTexture(canvas)

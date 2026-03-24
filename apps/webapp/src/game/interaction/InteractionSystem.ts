@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { NpcEntity } from '../npc/NpcEntity'
+import type { DoorEntity } from '../door/DoorEntity'
 
 export class InteractionSystem {
   private readonly direction = new THREE.Vector3()
@@ -11,37 +12,48 @@ export class InteractionSystem {
     this.facingThreshold = facingThreshold
   }
 
-  findTarget(
+  private findNearest<T extends { group: THREE.Group }>(
     playerPosition: THREE.Vector3,
     playerForward: THREE.Vector3,
-    npcs: NpcEntity[],
-  ) {
-    let closestNpc: NpcEntity | null = null
+    targets: T[],
+  ): T | null {
+    let closest: T | null = null
     let closestScore = Number.POSITIVE_INFINITY
 
-    for (const npc of npcs) {
-      this.direction.subVectors(npc.group.position, playerPosition)
+    for (const target of targets) {
+      this.direction.subVectors(target.group.position, playerPosition)
       const distance = this.direction.length()
 
-      if (distance > this.radius || distance === 0) {
-        continue
-      }
+      if (distance > this.radius || distance === 0) continue
 
       this.direction.normalize()
       const facing = this.direction.dot(playerForward)
 
-      if (facing < this.facingThreshold) {
-        continue
-      }
+      if (facing < this.facingThreshold) continue
 
       const score = distance - facing * 0.5
-
       if (score < closestScore) {
-        closestNpc = npc
+        closest = target
         closestScore = score
       }
     }
 
-    return closestNpc
+    return closest
+  }
+
+  findTarget(
+    playerPosition: THREE.Vector3,
+    playerForward: THREE.Vector3,
+    npcs: NpcEntity[],
+  ): NpcEntity | null {
+    return this.findNearest(playerPosition, playerForward, npcs)
+  }
+
+  findDoorTarget(
+    playerPosition: THREE.Vector3,
+    playerForward: THREE.Vector3,
+    doors: DoorEntity[],
+  ): DoorEntity | null {
+    return this.findNearest(playerPosition, playerForward, doors)
   }
 }

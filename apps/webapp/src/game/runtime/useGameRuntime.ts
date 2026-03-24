@@ -13,32 +13,24 @@ export const useGameRuntime = ({
   dialogueOpen,
   activeNpcId,
   onNpcInteract,
+  onDoorChoose,
 }: UseGameRuntimeOptions) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const runtimeRef = useRef<GameRuntime | null>(null)
 
   useEffect(() => {
-    if (!mountRef.current) {
-      return
-    }
-
-    const runtime = new GameRuntime(mountRef.current, {
-      onNpcInteract,
-    })
-
+    if (!mountRef.current) return
+    const runtime = new GameRuntime(mountRef.current, { onNpcInteract, onDoorChoose })
     runtimeRef.current = runtime
-
     return () => {
       runtime.destroy()
       runtimeRef.current = null
     }
-  }, [onNpcInteract])
+  }, [onNpcInteract, onDoorChoose])
 
   useEffect(() => {
-    runtimeRef.current?.setCallbacks({
-      onNpcInteract,
-    })
-  }, [onNpcInteract])
+    runtimeRef.current?.setCallbacks({ onNpcInteract, onDoorChoose })
+  }, [onNpcInteract, onDoorChoose])
 
   useEffect(() => {
     runtimeRef.current?.setScene(scene)

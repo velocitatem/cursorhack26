@@ -11,12 +11,13 @@ export class FollowCamera {
     this.camera = camera
     this.controls = new OrbitControls(camera, domElement)
     this.controls.enableDamping = true
-    this.controls.dampingFactor = 0.08
+    this.controls.dampingFactor = 0.06
     this.controls.enablePan = false
-    this.controls.minDistance = 4.5
-    this.controls.maxDistance = 8.5
-    this.controls.minPolarAngle = Math.PI / 4.5
-    this.controls.maxPolarAngle = Math.PI / 2.05
+    this.controls.minDistance = 5
+    this.controls.maxDistance = 9.5
+    // allow camera to look more upward for dramatic RPG framing
+    this.controls.minPolarAngle = Math.PI / 5
+    this.controls.maxPolarAngle = Math.PI / 2.1
     this.controls.target.set(0, 1.4, 0)
   }
 
@@ -26,7 +27,7 @@ export class FollowCamera {
 
   update(target: THREE.Vector3) {
     this.desiredTarget.copy(target)
-    this.controls.target.lerp(this.desiredTarget, 0.16)
+    this.controls.target.lerp(this.desiredTarget, 0.14)
     this.controls.update()
   }
 
@@ -40,11 +41,7 @@ export class FollowCamera {
   getPlanarForward(target = new THREE.Vector3()) {
     this.camera.getWorldDirection(target)
     target.y = 0
-
-    if (target.lengthSq() < 0.0001) {
-      target.set(0, 0, -1)
-    }
-
+    if (target.lengthSq() < 0.0001) target.set(0, 0, -1)
     return target.normalize()
   }
 
