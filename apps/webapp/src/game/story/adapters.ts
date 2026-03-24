@@ -95,6 +95,8 @@ export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): Scen
         emailId: relatedEmailId,
         position: getPosition(scene),
         openingLine: scene.dialogue,
+        ttsUrl: scene.tts || undefined,
+        voiceId: scene.voice_id ?? undefined,
         choices: scene.choices.map(choice => ({
           id: choice.slug,
           label: choice.label,

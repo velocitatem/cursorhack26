@@ -20,6 +20,8 @@ export const sceneSchema = z.object({
   npc_id: z.string().min(1),
   npc_name: z.string().min(1),
   dialogue: z.string().min(1),
+  tts: z.string().default(''),
+  voice_id: z.string().nullable().optional(),
   choices: z.array(sceneChoiceSchema).default([]),
   is_terminal: z.boolean().default(false),
   related_email_ids: z.array(z.string()).default([]),

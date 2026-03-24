@@ -1,7 +1,8 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import './App.css'
 import { DialogueOverlay } from './components/DialogueOverlay'
 import { WorldCanvas } from './components/WorldCanvas'
+import { useDialogueAudio } from './game/story/useDialogueAudio'
 import { useDialogueState } from './game/story/useDialogueState'
 import { useSceneLoader } from './game/story/useSceneLoader'
 import type { SceneNpc } from './game/story/types'
@@ -22,16 +23,37 @@ function App() {
     resolveDrafts,
     restart,
   } = useSceneLoader()
+  const {
+    status: dialogueAudioStatus,
+    error: dialogueAudioError,
+    currentTime: dialogueAudioCurrentTime,
+    duration: dialogueAudioDuration,
+    playNpc,
+    stop: stopDialogueAudio,
+  } = useDialogueAudio()
   const { activeNpcId, activeNpc, visibleLine, isOpen, openDialogue, closeDialogue } =
-    useDialogueState(scene)
+    useDialogueState(scene, {
+      currentTime: dialogueAudioCurrentTime,
+      duration: dialogueAudioDuration,
+    })
   const isBusy = isStarting || isAdvancing || isResolving
+
+  useEffect(() => {
+    stopDialogueAudio()
+  }, [scene.sceneId, stopDialogueAudio])
 
   const handleNpcInteract = useCallback(
     (npc: SceneNpc) => {
+      void playNpc(npc)
       openDialogue(npc.id)
     },
-    [openDialogue],
+    [openDialogue, playNpc],
   )
+
+  const handleCloseDialogue = useCallback(() => {
+    stopDialogueAudio()
+    closeDialogue()
+  }, [closeDialogue, stopDialogueAudio])
 
   const handleChoice = useCallback(
     async (choiceId: string) => {
@@ -39,13 +61,14 @@ function App() {
         return
       }
 
+      stopDialogueAudio()
       await chooseOption({
         npcId: activeNpc.id,
         choiceId,
       })
       closeDialogue()
     },
-    [activeNpc, chooseOption, closeDialogue],
+    [activeNpc, chooseOption, closeDialogue, stopDialogueAudio],
   )
 
   const handleResolve = useCallback(() => {
@@ -53,9 +76,10 @@ function App() {
   }, [resolveDrafts])
 
   const handleRestart = useCallback(() => {
+    stopDialogueAudio()
     closeDialogue()
     restart()
-  }, [closeDialogue, restart])
+  }, [closeDialogue, restart, stopDialogueAudio])
 
   return (
     <main className="app-shell">
@@ -134,7 +158,9 @@ function App() {
         npc={activeNpc}
         visibleLine={visibleLine}
         isAdvancing={isAdvancing}
-        onClose={closeDialogue}
+        audioStatus={dialogueAudioStatus}
+        audioError={dialogueAudioError}
+        onClose={handleCloseDialogue}
         onChoose={handleChoice}
       />
     </main>

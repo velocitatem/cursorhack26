@@ -65,6 +65,7 @@ const storyScenes: StoryScene[] = [
     npc_id: inboxNpc.id,
     npc_name: inboxNpc.name,
     dialogue: inboxNpc.openingLine,
+    tts: '',
     choices: inboxNpc.choices.map(choice => ({
       slug: choice.id,
       label: choice.label,
@@ -78,6 +79,7 @@ const storyScenes: StoryScene[] = [
     npc_id: followUpNpc.id,
     npc_name: followUpNpc.name,
     dialogue: followUpNpc.openingLine,
+    tts: '',
     choices: followUpNpc.choices.map(choice => ({
       slug: choice.id,
       label: choice.label,
@@ -91,6 +93,7 @@ const storyScenes: StoryScene[] = [
     npc_id: victoryNpc.id,
     npc_name: victoryNpc.name,
     dialogue: victoryNpc.openingLine,
+    tts: '',
     choices: [],
     is_terminal: true,
     related_email_ids: defaultInbox.map(email => email.id),

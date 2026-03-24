@@ -21,6 +21,8 @@ export type SceneNpc = {
   emailId: string
   position: SceneVector
   openingLine: string
+  ttsUrl?: string
+  voiceId?: string | null
   choices: SceneChoice[]
   appearance?: CharacterAppearance
 }

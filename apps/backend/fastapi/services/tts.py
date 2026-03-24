@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import logging
 import os
 import random
+import time
 from threading import Lock
 from typing import Any
 
@@ -15,8 +16,10 @@ from services.cache import delete_keys, get_bytes, get_json, set_bytes, set_json
 log = logging.getLogger(__name__)
 
 ELEVENLABS_URL_TEMPLATE = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+ELEVENLABS_VOICES_URL = "https://api.elevenlabs.io/v1/voices?show_legacy=true"
 DEFAULT_MODEL_ID = "eleven_multilingual_v2"
 DEFAULT_MAX_TEXT_CHARS = 1400
+VOICE_CATALOG_TTL_SECONDS = 300
 
 
 @dataclass
@@ -30,6 +33,10 @@ class SceneTTSCacheEntry:
 
 _CACHE: dict[tuple[str, str], SceneTTSCacheEntry] = {}
 _LOCK = Lock()
+_VOICE_POOL_LOCK = Lock()
+_FREE_TIER_VOICE_POOL: list[str] | None = None
+_FREE_TIER_VOICE_POOL_EXPIRES_AT = 0.0
+_VOICE_DENYLIST: set[str] = set()
 
 
 def _cache_key(session_id: str, scene_id: str) -> tuple[str, str]:
@@ -107,11 +114,90 @@ def _parse_voice_pool() -> list[str]:
     return []
 
 
-def _pick_voice_id() -> str:
-    voices = _parse_voice_pool()
+def _is_free_tier_voice(voice: dict[str, Any]) -> bool:
+    if str(voice.get("category", "")).lower() != "premade":
+        return False
+    tiers = [str(tier).lower() for tier in voice.get("available_for_tiers") or []]
+    return not tiers or any("free" in tier for tier in tiers)
+
+
+def _refresh_free_tier_voice_pool() -> list[str]:
+    configured = list(dict.fromkeys(_parse_voice_pool()))
+    api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if not api_key:
+        return configured
+    response = requests.get(
+        ELEVENLABS_VOICES_URL,
+        headers={"xi-api-key": api_key},
+        timeout=15,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    voices = payload.get("voices", []) if isinstance(payload, dict) else []
+    if not isinstance(voices, list):
+        return configured
+    voices_by_id = {
+        str(voice.get("voice_id")): voice
+        for voice in voices
+        if isinstance(voice, dict) and voice.get("voice_id")
+    }
+    filtered = [
+        voice_id
+        for voice_id in configured
+        if _is_free_tier_voice(voices_by_id.get(voice_id, {}))
+    ]
+    if filtered:
+        return filtered
+    return list(
+        dict.fromkeys(
+            str(voice.get("voice_id"))
+            for voice in voices
+            if isinstance(voice, dict) and voice.get("voice_id") and _is_free_tier_voice(voice)
+        )
+    )
+
+
+def _free_tier_voice_pool() -> list[str]:
+    global _FREE_TIER_VOICE_POOL, _FREE_TIER_VOICE_POOL_EXPIRES_AT
+    now = time.monotonic()
+    with _VOICE_POOL_LOCK:
+        if _FREE_TIER_VOICE_POOL is not None and now < _FREE_TIER_VOICE_POOL_EXPIRES_AT:
+            return [voice_id for voice_id in _FREE_TIER_VOICE_POOL if voice_id not in _VOICE_DENYLIST]
+    try:
+        voice_pool = _refresh_free_tier_voice_pool()
+    except requests.RequestException:
+        log.warning("elevenlabs_voice_catalog_request_failed", exc_info=True)
+        voice_pool = _parse_voice_pool()
+    except Exception:
+        log.warning("elevenlabs_voice_catalog_failed", exc_info=True)
+        voice_pool = _parse_voice_pool()
+    cached = list(dict.fromkeys(voice_pool))
+    with _VOICE_POOL_LOCK:
+        _FREE_TIER_VOICE_POOL = cached
+        _FREE_TIER_VOICE_POOL_EXPIRES_AT = now + VOICE_CATALOG_TTL_SECONDS
+    return [voice_id for voice_id in cached if voice_id not in _VOICE_DENYLIST]
+
+
+def _mark_voice_unavailable(voice_id: str) -> None:
+    _VOICE_DENYLIST.add(voice_id)
+    with _VOICE_POOL_LOCK:
+        if _FREE_TIER_VOICE_POOL is not None:
+            _FREE_TIER_VOICE_POOL[:] = [cached_id for cached_id in _FREE_TIER_VOICE_POOL if cached_id != voice_id]
+
+
+def _pick_voice_id(exclude: set[str] | None = None) -> str:
+    blocked = _VOICE_DENYLIST | (exclude or set())
+    voices = [voice_id for voice_id in _free_tier_voice_pool() if voice_id not in blocked]
+    if not voices:
+        voices = [voice_id for voice_id in _parse_voice_pool() if voice_id not in blocked]
     if not voices:
         raise RuntimeError("No ElevenLabs voice configured. Set ELEVENLABS_VOICE_IDS or ELEVENLABS_VOICE_ID.")
     return random.choice(voices)
+
+
+def _is_paid_plan_voice_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "paid_plan_required" in message or "free users cannot use library voices via the api" in message
 
 
 def scene_tts_url(session_id: str, scene_id: str) -> str:
@@ -238,13 +324,33 @@ def synthesize_tts_stream(text: str, voice_id: str) -> bytes:
 
 def generate_and_cache_scene_tts(session_id: str, scene_id: str, text: str) -> None:
     entry = set_scene_pending(session_id, scene_id)
+    attempted_voice_ids: set[str] = set()
     voice_id = entry.voice_id or _pick_voice_id()
-    try:
-        audio = synthesize_tts_stream(text=text, voice_id=voice_id)
-        set_scene_ready(session_id=session_id, scene_id=scene_id, voice_id=voice_id, audio_bytes=audio)
-        log.info("tts_scene_ready session_id=%s scene_id=%s voice_id=%s", session_id, scene_id, voice_id)
-    except Exception as exc:
-        set_scene_failed(session_id=session_id, scene_id=scene_id, voice_id=voice_id, error=str(exc))
-        log.exception("tts_scene_failed session_id=%s scene_id=%s", session_id, scene_id)
-        raise
+    while True:
+        attempted_voice_ids.add(voice_id)
+        try:
+            audio = synthesize_tts_stream(text=text, voice_id=voice_id)
+            set_scene_ready(session_id=session_id, scene_id=scene_id, voice_id=voice_id, audio_bytes=audio)
+            log.info("tts_scene_ready session_id=%s scene_id=%s voice_id=%s", session_id, scene_id, voice_id)
+            return
+        except Exception as exc:
+            if _is_paid_plan_voice_error(exc):
+                _mark_voice_unavailable(voice_id)
+                try:
+                    next_voice_id = _pick_voice_id(exclude=attempted_voice_ids)
+                except RuntimeError:
+                    next_voice_id = ""
+                if next_voice_id:
+                    log.warning(
+                        "tts_scene_retrying_free_tier_voice session_id=%s scene_id=%s voice_id=%s next_voice_id=%s",
+                        session_id,
+                        scene_id,
+                        voice_id,
+                        next_voice_id,
+                    )
+                    voice_id = next_voice_id
+                    continue
+            set_scene_failed(session_id=session_id, scene_id=scene_id, voice_id=voice_id, error=str(exc))
+            log.exception("tts_scene_failed session_id=%s scene_id=%s", session_id, scene_id)
+            raise
 
