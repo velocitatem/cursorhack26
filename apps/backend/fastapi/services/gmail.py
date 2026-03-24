@@ -10,7 +10,7 @@ import re
 from typing import Any, Literal
 
 from alveslib import get_logger
-import requests
+import httpx
 
 from config import get_settings
 from models.story import EmailDraft, EmailItem
@@ -22,6 +22,7 @@ GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+DEFAULT_HTTP_TIMEOUT = httpx.Timeout(30.0)
 
 
 class GmailServiceError(RuntimeError):
@@ -78,7 +79,9 @@ def _require_scopes(token: StoredGoogleToken, required_scopes: set[str]) -> None
         raise GmailServiceError(f"Missing required Gmail scopes: {', '.join(missing_scopes)}")
 
 
-def _refresh_access_token(token: StoredGoogleToken) -> StoredGoogleToken:
+async def _refresh_access_token(
+    token: StoredGoogleToken, client: httpx.AsyncClient
+) -> StoredGoogleToken:
     if not token.refresh_token:
         raise GmailTokenRefreshError("Google token expired and cannot be refreshed.")
 
@@ -87,16 +90,19 @@ def _refresh_access_token(token: StoredGoogleToken) -> StoredGoogleToken:
         raise GmailTokenRefreshError("Google OAuth is not configured.")
 
     log.info("gmail_token_refresh_start user_id=%s", token.user_id)
-    response = requests.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "refresh_token": token.refresh_token,
-            "grant_type": "refresh_token",
-        },
-        timeout=30,
-    )
+    try:
+        response = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "refresh_token": token.refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
+    except httpx.HTTPError as exc:
+        raise GmailRequestError(f"Gmail API request failed: {exc}") from exc
+
     if response.status_code >= 400:
         log.warning(
             "gmail_token_refresh_failed user_id=%s status=%s body_preview=%s",
@@ -130,9 +136,11 @@ def _refresh_access_token(token: StoredGoogleToken) -> StoredGoogleToken:
     return refreshed
 
 
-def _ensure_fresh_token(token: StoredGoogleToken) -> StoredGoogleToken:
+async def _ensure_fresh_token(
+    token: StoredGoogleToken, client: httpx.AsyncClient
+) -> StoredGoogleToken:
     if _token_is_expired(token):
-        return _refresh_access_token(token)
+        return await _refresh_access_token(token, client)
     return token
 
 
@@ -143,10 +151,11 @@ def _authorized_headers(token: StoredGoogleToken) -> dict[str, str]:
     }
 
 
-def _gmail_request(
+async def _gmail_request(
     method: str,
     path: str,
     token: StoredGoogleToken,
+    client: httpx.AsyncClient,
     *,
     params: Any = None,
     json: dict[str, Any] | None = None,
@@ -155,12 +164,12 @@ def _gmail_request(
     headers = _authorized_headers(token)
     try:
         if method == "GET":
-            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response = await client.get(url, headers=headers, params=params)
         elif method == "POST":
-            response = requests.post(url, headers=headers, params=params, json=json, timeout=30)
+            response = await client.post(url, headers=headers, params=params, json=json)
         else:
             raise GmailRequestError(f"Unsupported Gmail request method: {method}")
-    except requests.RequestException as exc:
+    except httpx.HTTPError as exc:
         raise GmailRequestError(f"Gmail API request failed: {exc}") from exc
 
     if response.status_code >= 400:
@@ -249,7 +258,9 @@ def _build_today_query(now: datetime) -> str:
     return f"after:{int(start_of_day.timestamp())} before:{int(local_now.timestamp())}"
 
 
-def _build_reply_raw_message(original_headers: dict[str, str | None], draft: EmailDraft) -> bytes:
+def _build_reply_raw_message(
+    original_headers: dict[str, str | None], draft: EmailDraft
+) -> bytes:
     reply_to = (draft.to or "").strip() or original_headers.get("reply_to") or original_headers.get("from")
     if not reply_to:
         raise RuntimeError("Original message is missing recipient headers for reply.")
@@ -273,11 +284,14 @@ def _build_reply_raw_message(original_headers: dict[str, str | None], draft: Ema
     return message.as_bytes()
 
 
-def list_todays_emails(
-    user_token: StoredGoogleToken, *, max_emails: int = 50,
+async def _list_todays_emails_impl(
+    client: httpx.AsyncClient,
+    user_token: StoredGoogleToken,
+    *,
+    max_emails: int,
 ) -> tuple[list[EmailItem], StoredGoogleToken]:
     _require_scopes(user_token, {GMAIL_READONLY_SCOPE})
-    token = _ensure_fresh_token(user_token)
+    token = await _ensure_fresh_token(user_token, client)
 
     page_token: str | None = None
     items_with_dates: list[tuple[int, EmailItem]] = []
@@ -292,7 +306,7 @@ def list_todays_emails(
         if page_token:
             params["pageToken"] = page_token
 
-        page = _gmail_request("GET", "messages", token, params=params)
+        page = await _gmail_request("GET", "messages", token, client, params=params)
         messages = page.get("messages") or []
         log.info("gmail_list_page count=%s total_so_far=%s", len(messages), len(items_with_dates))
 
@@ -303,22 +317,28 @@ def list_todays_emails(
             if not message_id:
                 continue
             try:
-                full_message = _gmail_request(
-                    "GET", f"messages/{message_id}", token, params={"format": "full"},
+                full_message = await _gmail_request(
+                    "GET",
+                    f"messages/{message_id}",
+                    token,
+                    client,
+                    params={"format": "full"},
                 )
                 payload = full_message.get("payload") or {}
                 headers = payload.get("headers") or []
-                items_with_dates.append((
-                    int(full_message.get("internalDate") or 0),
-                    EmailItem(
-                        id=full_message.get("id") or message_id,
-                        sender=_extract_header(headers, "From") or "",
-                        subject=_extract_header(headers, "Subject") or "",
-                        snippet=full_message.get("snippet") or "",
-                        body=_extract_text_body(payload),
-                        thread_id=full_message.get("threadId"),
-                    ),
-                ))
+                items_with_dates.append(
+                    (
+                        int(full_message.get("internalDate") or 0),
+                        EmailItem(
+                            id=full_message.get("id") or message_id,
+                            sender=_extract_header(headers, "From") or "",
+                            subject=_extract_header(headers, "Subject") or "",
+                            snippet=full_message.get("snippet") or "",
+                            body=_extract_text_body(payload),
+                            thread_id=full_message.get("threadId"),
+                        ),
+                    )
+                )
             except GmailServiceError:
                 log.warning("gmail_message_parse_failed message_id=%s", message_id, exc_info=True)
 
@@ -330,18 +350,36 @@ def list_todays_emails(
     return [item for _, item in items_with_dates], token
 
 
-def send_draft_replies(user_token: StoredGoogleToken, drafts: list[EmailDraft]) -> tuple[list[SendResult], StoredGoogleToken]:
+async def list_todays_emails(
+    user_token: StoredGoogleToken,
+    *,
+    max_emails: int = 50,
+    http_client: httpx.AsyncClient | None = None,
+) -> tuple[list[EmailItem], StoredGoogleToken]:
+    if http_client is not None:
+        return await _list_todays_emails_impl(http_client, user_token, max_emails=max_emails)
+
+    async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+        return await _list_todays_emails_impl(client, user_token, max_emails=max_emails)
+
+
+async def _send_draft_replies_impl(
+    client: httpx.AsyncClient,
+    user_token: StoredGoogleToken,
+    drafts: list[EmailDraft],
+) -> tuple[list[SendResult], StoredGoogleToken]:
     _require_scopes(user_token, {GMAIL_SEND_SCOPE})
-    token = _ensure_fresh_token(user_token)
+    token = await _ensure_fresh_token(user_token, client)
     results: list[SendResult] = []
 
     for draft in drafts:
         thread_id: str | None = None
         try:
-            original_message = _gmail_request(
+            original_message = await _gmail_request(
                 "GET",
                 f"messages/{draft.email_id}",
                 token,
+                client,
                 params=[
                     ("format", "metadata"),
                     ("metadataHeaders", "Message-ID"),
@@ -367,10 +405,11 @@ def send_draft_replies(user_token: StoredGoogleToken, drafts: list[EmailDraft]) 
                 draft,
             )
             encoded_message = base64.urlsafe_b64encode(raw_message).decode("ascii").rstrip("=")
-            sent_message = _gmail_request(
+            sent_message = await _gmail_request(
                 "POST",
                 "messages/send",
                 token,
+                client,
                 json={"threadId": thread_id, "raw": encoded_message},
             )
             result = SendResult(
@@ -404,3 +443,16 @@ def send_draft_replies(user_token: StoredGoogleToken, drafts: list[EmailDraft]) 
             )
 
     return results, token
+
+
+async def send_draft_replies(
+    user_token: StoredGoogleToken,
+    drafts: list[EmailDraft],
+    *,
+    http_client: httpx.AsyncClient | None = None,
+) -> tuple[list[SendResult], StoredGoogleToken]:
+    if http_client is not None:
+        return await _send_draft_replies_impl(http_client, user_token, drafts)
+
+    async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+        return await _send_draft_replies_impl(client, user_token, drafts)

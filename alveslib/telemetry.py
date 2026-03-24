@@ -7,6 +7,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.sdk.resources import Resource
@@ -14,6 +15,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 _LOGGING_INSTRUMENTED = False
+_HTTPX_INSTRUMENTED = False
 _REQUESTS_INSTRUMENTED = False
 _FASTAPI_INSTRUMENTED: set[int] = set()
 
@@ -60,6 +62,14 @@ def _instrument_requests() -> None:
     _REQUESTS_INSTRUMENTED = True
 
 
+def _instrument_httpx() -> None:
+    global _HTTPX_INSTRUMENTED
+    if _HTTPX_INSTRUMENTED:
+        return
+    HTTPXClientInstrumentor().instrument()
+    _HTTPX_INSTRUMENTED = True
+
+
 def configure_worker_observability(service_name: str = "worker") -> None:
     if _sdk_disabled():
         _ensure_root_logging()
@@ -76,6 +86,7 @@ def configure_fastapi_observability(app: Any, service_name: str = "backend-fasta
     _ensure_root_logging()
     _tracer_provider(service_name)
     _instrument_logging()
+    _instrument_httpx()
     _instrument_requests()
     app_id = id(app)
     if app_id in _FASTAPI_INSTRUMENTED:
