@@ -2,7 +2,7 @@
 .PHONY: help init bootstrap venv deps lock envlink fmt lint type test clean doctor
 .PHONY: up down logs ps rebuild
 .PHONY: dev run.webapp run.webapp.simple run.backend run.worker run.ml
-.PHONY: lift lift.minio lift.tensorboard lift.mlflow lift.logging lift.database
+.PHONY: lift lift.minio lift.tensorboard lift.mlflow lift.logging lift.telemetry lift.database
 .PHONY: etl train infer seed
 .PHONY: nx.graph nx.projects nx.affected
 .DEFAULT_GOAL := help
@@ -106,6 +106,13 @@ lift.logging: ## Start Loki + Grafana logging stack
 	@if [ -f .env ]; then . ./.env 2>/dev/null; fi; \
 	echo "Grafana: http://localhost:$${GRAFANA_PORT:-3000} (admin/admin)"; \
 	echo "Loki:    http://localhost:$${LOKI_PORT:-3100}"
+
+lift.telemetry: ## Start Jaeger OTLP + UI
+	@docker compose --profile telemetry up -d
+	@if [ -f .env ]; then . ./.env 2>/dev/null; fi; \
+	echo "Jaeger UI: http://localhost:$${JAEGER_UI_PORT:-16686}"; \
+	echo "OTLP HTTP: http://localhost:$${OTEL_HTTP_PORT:-4318}"; \
+	echo "OTLP gRPC: localhost:$${OTEL_GRPC_PORT:-4317}"
 
 lift.database: ## Start database services (postgres/mongodb)
 	@docker compose --profile database up -d
