@@ -125,7 +125,7 @@ async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) ->
 
 async def _build_world_plan_async(emails: list[EmailItem], user_id: str) -> WorldPlanBuild:
     run_seed = int(uuid4().int % 1_000_000_000)
-    return await asyncio.to_thread(build_world_plan, emails, user_id, 4, run_seed)
+    return await asyncio.to_thread(build_world_plan, emails, user_id, 5, run_seed)
 
 
 def _scene_with_world_state(session: StorySession, scene: Scene, location_id: str) -> Scene:

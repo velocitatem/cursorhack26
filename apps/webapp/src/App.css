@@ -425,8 +425,17 @@
   z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.95fr);
+  align-items: start;
   gap: 22px;
   min-height: 100%;
+}
+
+.prelude-rail {
+  position: sticky;
+  top: calc(28px + var(--safe-top));
+  display: grid;
+  gap: 22px;
+  align-self: start;
 }
 
 .prelude-hero,
@@ -460,7 +469,17 @@
 }
 
 .prelude-status-card {
-  align-self: end;
+  position: relative;
+  overflow: hidden;
+}
+
+.prelude-status-card::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 120px;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(255, 184, 48, 0.06));
 }
 
 .prelude-metrics,
@@ -587,6 +606,30 @@
   gap: 10px;
   color: rgba(177, 255, 227, 0.56);
   font-size: 0.8rem;
+}
+
+.email-select-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 184, 48, 0.26);
+  border-radius: 999px;
+  color: rgba(255, 236, 196, 0.92);
+  background: rgba(255, 184, 48, 0.08);
+  cursor: pointer;
+}
+
+.email-select-pill input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #f7b84e;
+}
+
+.email-select-pill span {
+  font-size: 0.78rem;
+  line-height: 1;
 }
 
 .prelude-email-skeleton {
@@ -1139,6 +1182,11 @@
   .prelude-grid,
   .finale-grid {
     grid-template-columns: 1fr;
+  }
+
+  .prelude-rail {
+    position: static;
+    top: auto;
   }
 
   .prelude-status-card {

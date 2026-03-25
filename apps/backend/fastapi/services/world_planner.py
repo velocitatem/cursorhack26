@@ -151,14 +151,16 @@ WORLD_PLAN_SCHEMA: dict[str, Any] = {
 WORLD_SYSTEM_PROMPT = """You plan a compact RPG world for inbox triage.
 Return a persistent world graph where each location has one scene.
 Requirements:
-- Keep location count between 2 and 5.
+- Create exactly one location and one primary NPC for each input email, up to 5 total emails.
+- Keep location count between 1 and 5, matching the number of provided emails whenever emails exist.
 - Every scene must include environment with spawn and optional layout blocks.
 - Every scene must include npcs with explicit positions and dialogue.
 - Also keep top-level scene npc_id, npc_name, dialogue, choices aligned to the primary npc.
 - choice_transitions maps each choice slug to a valid location id.
 - related_email_ids and npc email_id must point to known emails.
+- Do not merge multiple emails into the same location or NPC.
 - Include one terminal location with empty choices and is_terminal=true.
-- Ensure transitions can reach a terminal node in <= 4 hops.
+- Ensure transitions follow the email sequence and can reach a terminal node in <= 5 hops.
 """
 
 DEFAULT_BOUNDS = SceneWorldBounds(minX=-14, maxX=14, minZ=-14, maxZ=14)
@@ -235,7 +237,8 @@ def _simple_layout(seed: int, location_idx: int) -> SceneLayout:
 
 def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -> WorldPlan:
     world_id = f"world-{uuid4().hex[:8]}"
-    email_seed = sum(ord(char) for email in emails for char in email.id) or 1337
+    selected_emails = emails[-5:] if emails else []
+    email_seed = sum(ord(char) for email in selected_emails for char in email.id) or 1337
     seed = run_seed if run_seed is not None else email_seed
     base_choices = [
         SceneChoice(slug="reply_now", label="Reply now", intent="agree_immediately"),
@@ -244,15 +247,17 @@ def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -
     ]
     locations: list[WorldLocation] = []
     transitions: dict[str, dict[str, str]] = {}
-    for idx, email in enumerate(emails[:3] or emails):
+    last_index = len(selected_emails) - 1
+    for idx, email in enumerate(selected_emails):
         loc_id = f"loc-{idx + 1}"
+        is_terminal = idx == last_index
         primary_npc = SceneNpc(
             id=email.id,
             name=email.sender.split("@")[0].replace(".", " ").title(),
             email_id=email.id,
             position=SceneVector(x=(idx * 4) - 4, y=0, z=2 if idx % 2 == 0 else -2),
             opening_line=f"{email.subject}. {email.snippet or 'This thread needs your response today.'}",
-            choices=base_choices if idx < 2 else [],
+            choices=[] if is_terminal else base_choices,
             related_email_ids=[email.id],
         )
         scene = Scene(
@@ -261,7 +266,7 @@ def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -
             npc_name=primary_npc.name,
             dialogue=primary_npc.opening_line,
             choices=primary_npc.choices,
-            is_terminal=idx == min(2, len(emails) - 1),
+            is_terminal=is_terminal,
             related_email_ids=[email.id],
             environment=SceneEnvironment(
                 theme="inboxPlaza" if idx % 2 == 0 else "cityBlock",
@@ -390,15 +395,16 @@ def _build_with_cloud_agent(payload: dict[str, Any]) -> WorldPlan | None:
 def build_world_plan(
     emails: list[EmailItem],
     user_id: str,
-    max_locations: int = 4,
+    max_locations: int = 5,
     run_seed: int | None = None,
 ) -> WorldPlanBuild:
     effective_seed = run_seed if run_seed is not None else int(uuid4().int % 1_000_000_000)
     if not emails:
         return WorldPlanBuild(plan=_fallback_world_plan([], run_seed=effective_seed), source="fallback", run_seed=effective_seed)
+    effective_location_limit = min(max(1, max_locations), min(len(emails), 5))
     payload = {
         "user_id": user_id,
-        "max_locations": max(2, min(max_locations, 5)),
+        "max_locations": effective_location_limit,
         "emails": [email.model_dump() for email in emails],
         "run_seed": effective_seed,
     }
