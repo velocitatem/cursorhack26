@@ -71,6 +71,7 @@
 .prelude-title,
 .finale-header h2,
 .finale-card-centered h2 {
+  margin: 0;
   font-size: clamp(1.75rem, 4vw, 2.25rem);
   font-weight: 600;
   line-height: 1.2;
@@ -319,10 +320,7 @@
   inset: 0;
   z-index: 8;
   padding:
-    calc(20px + var(--safe-top))
-    calc(20px + var(--safe-right))
-    calc(20px + var(--safe-bottom))
-    calc(20px + var(--safe-left));
+    calc(20px + var(--safe-top)) calc(20px + var(--safe-right)) calc(20px + var(--safe-bottom)) calc(20px + var(--safe-left));
   overflow: auto;
   background: linear-gradient(165deg, var(--bg-page-elevated), var(--bg-page));
 }
@@ -345,7 +343,7 @@
 
 .prelude-rail {
   position: sticky;
-  top: calc(20px + var(--safe-top));
+  top: 0;
   display: grid;
   gap: 20px;
   align-self: start;
@@ -574,15 +572,6 @@
 
 .prelude-email-skeleton span:nth-child(3) {
   width: 88%;
-}
-
-.status-ring {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border);
-  border-top-color: var(--text-muted);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
 }
 
 .status-rail {
@@ -845,10 +834,7 @@
   justify-content: space-between;
   align-items: flex-end;
   padding:
-    0
-    calc(14px + var(--safe-right))
-    calc(12px + var(--safe-bottom))
-    calc(14px + var(--safe-left));
+    0 calc(14px + var(--safe-right)) calc(12px + var(--safe-bottom)) calc(14px + var(--safe-left));
   pointer-events: none;
 }
 
@@ -940,10 +926,7 @@
   justify-content: center;
   align-items: flex-end;
   padding:
-    calc(16px + var(--safe-top))
-    calc(16px + var(--safe-right))
-    calc(16px + var(--safe-bottom))
-    calc(16px + var(--safe-left));
+    calc(16px + var(--safe-top)) calc(16px + var(--safe-right)) calc(16px + var(--safe-bottom)) calc(16px + var(--safe-left));
   background: linear-gradient(transparent 40%, rgba(44, 41, 38, 0.72) 100%);
 }
 
@@ -1095,6 +1078,7 @@
 }
 
 @keyframes pulse-bg {
+
   0%,
   100% {
     opacity: 0.35;
@@ -1128,6 +1112,7 @@
 }
 
 @media (max-width: 1080px) {
+
   .prelude-grid,
   .finale-grid {
     grid-template-columns: 1fr;
@@ -1144,6 +1129,7 @@
 }
 
 @media (max-width: 960px) {
+
   .loading-shell,
   .auth-shell {
     padding: 20px;
@@ -1171,10 +1157,7 @@
   .prelude-overlay,
   .finale-overlay {
     padding:
-      calc(14px + var(--safe-top))
-      calc(14px + var(--safe-right))
-      calc(14px + var(--safe-bottom))
-      calc(14px + var(--safe-left));
+      calc(14px + var(--safe-top)) calc(14px + var(--safe-right)) calc(14px + var(--safe-bottom)) calc(14px + var(--safe-left));
   }
 
   .prelude-hero,
@@ -1220,10 +1203,7 @@
 
   .story-hud {
     inset:
-      calc(10px + var(--safe-top))
-      calc(10px + var(--safe-right))
-      auto
-      calc(10px + var(--safe-left));
+      calc(10px + var(--safe-top)) calc(10px + var(--safe-right)) auto calc(10px + var(--safe-left));
   }
 
   .story-status-card {
@@ -1275,10 +1255,7 @@
 
   .dialogue-overlay {
     padding:
-      calc(10px + var(--safe-top))
-      calc(10px + var(--safe-right))
-      calc(10px + var(--safe-bottom))
-      calc(10px + var(--safe-left));
+      calc(10px + var(--safe-top)) calc(10px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(10px + var(--safe-left));
   }
 
   .choice-list {
@@ -1287,10 +1264,7 @@
 
   .mobile-controls {
     padding:
-      0
-      calc(10px + var(--safe-right))
-      calc(10px + var(--safe-bottom))
-      calc(10px + var(--safe-left));
+      0 calc(10px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(10px + var(--safe-left));
   }
 
   .mobile-joystick {
@@ -1315,7 +1289,8 @@
   }
 }
 
-@media (hover: none), (pointer: coarse) {
+@media (hover: none),
+(pointer: coarse) {
   .session-pill {
     gap: 8px;
     padding: 4px 8px 4px 4px;
@@ -1333,7 +1308,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-ring,
+
   .status-rail-fill,
   .prelude-email-skeleton span {
     animation: none;
