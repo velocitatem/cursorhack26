@@ -35,4 +35,4 @@ WORKDIR /app/apps/backend/fastapi
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import os,sys,urllib.request; port=os.getenv('BACKEND_PORT', os.getenv('PORT', '5000')); r=urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3); sys.exit(0 if r.getcode() == 200 else 1)" || exit 1
 
-CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${BACKEND_PORT:-${PORT:-5000}} --no-access-log"]
+CMD ["python", "-c", "import os, uvicorn; uvicorn.run('server:app', host='0.0.0.0', port=int(os.getenv('BACKEND_PORT') or os.getenv('PORT') or '5000'), access_log=False)"]
