@@ -217,6 +217,55 @@
   font-size: 1rem;
 }
 
+.auth-tagline {
+  margin-top: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 184, 48, 0.9);
+}
+
+.auth-pitch {
+  margin-top: 12px;
+  max-width: 58ch;
+  color: rgba(194, 255, 234, 0.78);
+}
+
+.auth-pitch p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.auth-flow {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.auth-flow li {
+  padding-left: 14px;
+  position: relative;
+  line-height: 1.45;
+}
+
+.auth-flow li::before {
+  content: '>';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+
+.auth-secondary-cta {
+  margin-top: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  color: rgba(194, 255, 234, 0.66);
+}
+
 .auth-corner {
   position: absolute;
   width: 26px;
