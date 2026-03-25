@@ -60,8 +60,8 @@
 .prelude-title,
 .finale-header h2,
 .finale-card-centered h2 {
-  font-size: clamp(2.7rem, 6vw, 5.2rem);
-  line-height: 0.94;
+  font-size: clamp(3rem, 6.4vw, 5.8rem);
+  line-height: 0.91;
   letter-spacing: -0.04em;
   color: var(--text-primary);
 }
@@ -75,7 +75,7 @@
 .status-copy {
   margin-top: 16px;
   max-width: 42ch;
-  font-size: 0.98rem;
+  font-size: 1.04rem;
   line-height: 1.65;
   color: rgba(232, 238, 247, 0.74);
 }
@@ -491,11 +491,14 @@
 }
 
 .hud-button {
-  padding: 11px 18px;
+  min-height: 50px;
+  padding: 13px 22px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   color: #f2f6fd;
   background: rgba(255, 255, 255, 0.07);
+  font-size: 0.98rem;
+  font-weight: 600;
 }
 
 .hud-button-primary {
@@ -541,7 +544,7 @@
 
 .finale-card {
   width: min(1160px, 100%);
-  padding: 26px;
+  padding: 36px;
 }
 
 .finale-card-centered {
@@ -555,25 +558,29 @@
 
 .finale-header {
   align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 12px;
 }
 
 .finale-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 14px;
 }
 
 .finale-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
-  gap: 18px;
-  margin-top: 24px;
+  gap: 22px;
+  margin-top: 28px;
 }
 
 .finale-column {
-  padding: 18px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.03);
+  padding: 24px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .finale-column-compact {
@@ -583,25 +590,26 @@
 
 .finale-email-card,
 .route-card {
-  padding: 18px;
+  padding: 22px;
 }
 
 .route-card strong {
   display: block;
-  font-size: 0.95rem;
+  font-size: 1.05rem;
 }
 
 .route-card p {
   margin-top: 8px;
+  font-size: 0.98rem;
   color: rgba(232, 238, 247, 0.68);
 }
 
 .result-badge {
   display: inline-flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 999px;
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -617,12 +625,24 @@
   background: linear-gradient(135deg, #ffb8b1, #e77a70);
 }
 
+.result-badge-skipped {
+  color: #ccb88a;
+  background: linear-gradient(135deg, rgba(76, 84, 98, 0.92), rgba(46, 52, 63, 0.92));
+  border: 1px solid rgba(244, 202, 130, 0.16);
+}
+
 .finale-summary-strip {
-  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 28px;
 }
 
 .finale-summary-strip span {
   justify-content: center;
+  min-height: 54px;
+  font-size: 0.92rem;
+  font-weight: 600;
 }
 
 .world-canvas {
@@ -862,9 +882,9 @@
 .prelude-start-cta .hud-button-primary { font-size: 1rem; padding: 14px 28px; }
 
 .email-toggle {
-  flex-shrink: 0; padding: 6px 14px;
+  flex-shrink: 0; padding: 9px 16px;
   border: 1px solid rgba(255,255,255,0.1); border-radius: 999px;
-  font: inherit; font-size: 0.76rem; font-weight: 600;
+  font: inherit; font-size: 0.82rem; font-weight: 600;
   color: rgba(232,238,247,0.56); background: rgba(255,255,255,0.04);
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
@@ -873,3 +893,37 @@
 
 .finale-email-card-excluded { opacity: 0.38; transition: opacity 160ms ease; }
 .finale-email-card-excluded:hover { opacity: 0.62; }
+
+.finale-email-header {
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.finale-email-card h3 {
+  font-size: 1.42rem;
+  line-height: 1.2;
+}
+
+.finale-email-card p {
+  font-size: 1.02rem;
+  line-height: 1.72;
+}
+
+.draft-to {
+  font-size: 1rem;
+  color: rgba(232, 238, 247, 0.82);
+}
+
+.result-meta {
+  margin-top: 18px;
+}
+
+.result-meta span {
+  min-height: 38px;
+  padding: 9px 14px;
+  font-size: 0.82rem;
+}
+
+.panel-header h3 {
+  font-size: 1.25rem;
+}

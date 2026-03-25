@@ -195,6 +195,9 @@ function FinaleOverlay({
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(
     () => new Set(drafts.map(d => d.email_id))
   )
+  useEffect(() => {
+    setSelectedDraftIds(new Set(drafts.map(d => d.email_id)))
+  }, [drafts])
   const toggleDraft = (id: string) => setSelectedDraftIds(prev => {
     const next = new Set(prev)
     next.has(id) ? next.delete(id) : next.add(id)
@@ -208,8 +211,16 @@ function FinaleOverlay({
   }))
 
   const resultsByEmailId = new Map(sendResults.map(result => [result.email_id, result]))
-  const sentCount = sendResults.filter(result => result.status === 'sent').length
-  const failedCount = sendResults.filter(result => result.status === 'failed').length
+  const recapRows = drafts.map(draft => {
+    const result = resultsByEmailId.get(draft.email_id)
+    const wasSelected = selectedDraftIds.has(draft.email_id)
+    const status: 'sent' | 'failed' | 'skipped' =
+      result?.status ?? (wasSelected ? 'failed' : 'skipped')
+    return { draft, result, wasSelected, status }
+  })
+  const sentCount = recapRows.filter(row => row.status === 'sent').length
+  const failedCount = recapRows.filter(row => row.status === 'failed').length
+  const skippedCount = recapRows.filter(row => row.status === 'skipped').length
 
   if (isResolving) {
     return (
@@ -254,7 +265,9 @@ function FinaleOverlay({
               <p className="screen-kicker">Run Complete</p>
               <h2>Agent recap</h2>
               <p className="prelude-copy">
-                {sentCount} sent{failedCount ? `, ${failedCount} still need attention.` : '. Every routed reply made it out.'}
+                {sentCount} sent
+                {failedCount ? `, ${failedCount} still need attention` : ''}
+                {skippedCount ? `, ${skippedCount} intentionally held back.` : '. Every selected reply made it out.'}
               </p>
             </div>
             <button className="hud-button" onClick={onRestart} type="button">
@@ -265,13 +278,12 @@ function FinaleOverlay({
           <div className="finale-summary-strip">
             <span>{drafts.length} drafts reviewed</span>
             <span>{sentCount} sent</span>
+            <span>{skippedCount} skipped</span>
             <span>{failedCount} failed</span>
           </div>
 
           <div className="finale-list">
-            {drafts.map(draft => {
-              const result = resultsByEmailId.get(draft.email_id)
-              const status = result?.status ?? 'failed'
+            {recapRows.map(({ draft, result, status }) => {
               return (
                 <article className="finale-email-card" key={draft.email_id}>
                   <div className="finale-email-header">
@@ -285,8 +297,14 @@ function FinaleOverlay({
                   <p>{draft.body}</p>
 
                   <div className="result-meta">
-                    <span>{result?.gmail_message_id ? `Message ${result.gmail_message_id}` : 'Awaiting provider id'}</span>
-                    <span>{result?.thread_id ? `Thread ${result.thread_id}` : 'Thread id pending'}</span>
+                    {status === 'skipped' ? (
+                      <span>Held back during final review</span>
+                    ) : (
+                      <>
+                        <span>{result?.gmail_message_id ? `Message ${result.gmail_message_id}` : 'Awaiting provider id'}</span>
+                        <span>{result?.thread_id ? `Thread ${result.thread_id}` : 'Thread id pending'}</span>
+                      </>
+                    )}
                   </div>
 
                   {status === 'failed' ? (
@@ -312,15 +330,15 @@ function FinaleOverlay({
   return (
     <section className="finale-overlay">
       <div className="finale-card">
-        <div className="finale-header">
-          <div>
-            <p className="screen-kicker">Final Review</p>
-            <h2>The route is locked.</h2>
-            <p className="prelude-copy">Review the bundle, then send the full set through the agent in one action.</p>
-          </div>
-          <div className="finale-actions">
-            <button className="hud-button" onClick={onRestart} type="button">
-              Restart run
+          <div className="finale-header">
+            <div>
+              <p className="screen-kicker">Final Review</p>
+              <h2>The route is locked.</h2>
+              <p className="prelude-copy">Review the bundle, trim anything you do not want to send, then dispatch the rest in one action.</p>
+            </div>
+            <div className="finale-actions">
+              <button className="hud-button" onClick={onRestart} type="button">
+                Restart run
             </button>
             <button
               className="hud-button hud-button-primary"
