@@ -40,6 +40,11 @@ export const startSceneRequestSchema = z.object({
   inbox_override: z.array(emailItemSchema).nullable().optional(),
 })
 
+export const inboxPreviewResponseSchema = z.object({
+  emails: z.array(emailItemSchema),
+  source: z.enum(['gmail', 'mock', 'override']),
+})
+
 export const advanceSceneRequestSchema = z.object({
   choice_slug: z.string().min(1),
 })
@@ -77,14 +82,21 @@ export const draftSendResultSchema = z.object({
   error: z.string().nullable().optional(),
 })
 
+export const sendResponseSchema = z.object({
+  session_id: z.string(),
+  results: z.array(draftSendResultSchema),
+})
+
 export type EmailItem = z.infer<typeof emailItemSchema>
 export type SceneChoice = z.infer<typeof sceneChoiceSchema>
 export type StoryScene = z.infer<typeof sceneSchema>
 export type TraceStep = z.infer<typeof traceStepSchema>
 export type StartSceneRequest = z.input<typeof startSceneRequestSchema>
+export type InboxPreviewResponse = z.infer<typeof inboxPreviewResponseSchema>
 export type AdvanceSceneRequest = z.input<typeof advanceSceneRequestSchema>
 export type StartSceneResponse = z.infer<typeof startSceneResponseSchema>
 export type AdvanceSceneResponse = z.infer<typeof advanceSceneResponseSchema>
 export type EmailDraft = z.infer<typeof emailDraftSchema>
 export type ResolveResponse = z.infer<typeof resolveResponseSchema>
 export type DraftSendResult = z.infer<typeof draftSendResultSchema>
+export type SendResponse = z.infer<typeof sendResponseSchema>

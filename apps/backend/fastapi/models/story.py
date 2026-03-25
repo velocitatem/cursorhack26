@@ -69,6 +69,11 @@ class StartSceneResponse(BaseModel):
     done: bool
 
 
+class InboxPreviewResponse(BaseModel):
+    emails: list[EmailItem]
+    source: Literal["gmail", "mock", "override"]
+
+
 class AdvanceSceneResponse(BaseModel):
     scene: Scene
     trace: list[TraceStep]

@@ -3,7 +3,9 @@ import {
   advanceSceneRequestSchema,
   advanceSceneResponseSchema,
   draftSendResultSchema,
+  inboxPreviewResponseSchema,
   resolveResponseSchema,
+  sendResponseSchema,
   startSceneRequestSchema,
   startSceneResponseSchema,
   type AdvanceSceneRequest,
@@ -11,7 +13,9 @@ import {
   type DraftSendResult,
   type EmailDraft,
   type EmailItem,
+  type InboxPreviewResponse,
   type ResolveResponse,
+  type SendResponse,
   type StartSceneRequest,
   type StartSceneResponse,
   type StoryScene,
@@ -20,9 +24,11 @@ import {
 
 type StoryProvider = {
   readonly mode: 'stub'
+  preview: (request?: StartSceneRequest) => Promise<InboxPreviewResponse>
   start: (request?: StartSceneRequest) => Promise<StartSceneResponse>
   advance: (sessionId: string, request: AdvanceSceneRequest) => Promise<AdvanceSceneResponse>
   resolve: (sessionId: string) => Promise<ResolveResponse>
+  sendAll: (sessionId: string) => Promise<SendResponse>
   sendDraft: (sessionId: string, emailId: string) => Promise<DraftSendResult>
 }
 
@@ -133,6 +139,15 @@ const assertChoice = (scene: StoryScene, choiceSlug: string) => {
 export const createStubStoryProvider = (): StoryProvider => ({
   mode: 'stub',
 
+  async preview(request = {}) {
+    await stubDelay()
+    const payload = startSceneRequestSchema.parse(request)
+    return inboxPreviewResponseSchema.parse({
+      emails: payload.inbox_override ?? defaultInbox,
+      source: payload.inbox_override ? 'override' : 'mock',
+    })
+  },
+
   async start(request = {}) {
     await stubDelay()
     const payload = startSceneRequestSchema.parse(request)
@@ -204,6 +219,25 @@ export const createStubStoryProvider = (): StoryProvider => ({
     return resolveResponseSchema.parse({
       session_id: sessionId,
       drafts: buildDrafts(session.emails, session.trace),
+    })
+  },
+
+  async sendAll(sessionId) {
+    await stubDelay(520)
+    const session = sessions.get(sessionId)
+    if (!session) {
+      throw new Error(`Stub story session "${sessionId}" was not found.`)
+    }
+
+    return sendResponseSchema.parse({
+      session_id: sessionId,
+      results: buildDrafts(session.emails, session.trace).map(draft => ({
+        email_id: draft.email_id,
+        thread_id: null,
+        gmail_message_id: `stub-msg-${crypto.randomUUID()}`,
+        status: 'sent',
+        error: null,
+      })),
     })
   },
 

@@ -17,6 +17,45 @@ from routes.story import StorySession, router as story_router  # noqa: E402
 from services.tts import SceneTTSCacheEntry  # noqa: E402
 
 
+def test_story_preview_returns_mock_inbox_without_auth_repo():
+    app = FastAPI()
+    app.include_router(story_router)
+    client = TestClient(app)
+
+    preview = client.post("/story/scene/preview", json={"user_id": "demo-user"})
+    assert preview.status_code == 200
+    preview_json = preview.json()
+    assert preview_json["source"] == "mock"
+    assert len(preview_json["emails"]) == 2
+
+
+def test_story_preview_returns_override_inbox():
+    app = FastAPI()
+    app.include_router(story_router)
+    client = TestClient(app)
+
+    inbox = [
+        {
+            "id": "email-99",
+            "sender": "founder@company.com",
+            "subject": "Decision before lunch",
+            "snippet": "Need a clear yes or no this morning.",
+        }
+    ]
+
+    preview = client.post(
+        "/story/scene/preview",
+        json={"user_id": "demo-user", "inbox_override": inbox},
+    )
+    assert preview.status_code == 200
+    preview_json = preview.json()
+    assert preview_json["source"] == "override"
+    assert len(preview_json["emails"]) == 1
+    assert preview_json["emails"][0]["id"] == inbox[0]["id"]
+    assert preview_json["emails"][0]["sender"] == inbox[0]["sender"]
+    assert preview_json["emails"][0]["subject"] == inbox[0]["subject"]
+
+
 def test_story_scene_flow_end_to_end(monkeypatch):
     app = FastAPI()
     app.include_router(story_router)
