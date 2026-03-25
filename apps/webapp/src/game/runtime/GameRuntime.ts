@@ -9,6 +9,7 @@ import { buildDemoMap } from '../world/buildDemoMap'
 
 export type GameRuntimeCallbacks = {
   onNpcInteract?: (npc: SceneNpc) => void
+  onInteractionTargetChange?: (npc: SceneNpc | null) => void
 }
 
 export class GameRuntime {
@@ -47,6 +48,9 @@ export class GameRuntime {
 
   setCallbacks(callbacks: GameRuntimeCallbacks) {
     this.callbacks = callbacks
+    this.callbacks.onInteractionTargetChange?.(
+      this.hoveredNpcId ? this.npcManager.getById(this.hoveredNpcId)?.data ?? null : null,
+    )
   }
 
   setScene(scene: ScenePayload) {
@@ -65,6 +69,7 @@ export class GameRuntime {
     this.npcManager.setScene(scene.npcs)
     this.activeNpcId = null
     this.hoveredNpcId = null
+    this.callbacks.onInteractionTargetChange?.(null)
   }
 
   setDialogueOpen(active: boolean) {
@@ -72,13 +77,36 @@ export class GameRuntime {
     this.player.setEnabled(!active)
     this.followCamera.setEnabled(!active)
     if (active) {
-      this.npcManager.setInteractHint(null)
+      this.setHoveredNpc(null)
     }
   }
 
   setActiveNpc(id: string | null) {
     this.activeNpcId = id
     this.npcManager.setHighlighted(id)
+  }
+
+  setMoveInput(x: number, y: number) {
+    this.player.setMoveInput(x, y)
+  }
+
+  clearMoveInput() {
+    this.player.clearMoveInput()
+  }
+
+  interact() {
+    this.player.queueInteract()
+  }
+
+  private setHoveredNpc(npc: ReturnType<InteractionSystem['findTarget']>) {
+    const nextId = npc?.data.id ?? null
+    if (nextId === this.hoveredNpcId) {
+      return
+    }
+
+    this.hoveredNpcId = nextId
+    this.npcManager.setInteractHint(this.dialogueOpen ? null : nextId)
+    this.callbacks.onInteractionTargetChange?.(npc?.data ?? null)
   }
 
   private animate = () => {
@@ -109,17 +137,12 @@ export class GameRuntime {
       this.activeNpcId ?? hoveredNpc?.data.id ?? null
 
     this.npcManager.setHighlighted(highlightedNpcId)
-
-    const newHoveredId = hoveredNpc?.data.id ?? null
-    if (newHoveredId !== this.hoveredNpcId) {
-      this.hoveredNpcId = newHoveredId
-      this.npcManager.setInteractHint(this.dialogueOpen ? null : newHoveredId)
-    }
+    this.setHoveredNpc(hoveredNpc)
 
     if (!this.dialogueOpen && wantsInteract && hoveredNpc) {
       this.activeNpcId = hoveredNpc.data.id
       this.npcManager.setHighlighted(this.activeNpcId)
-      this.npcManager.setInteractHint(null)
+      this.setHoveredNpc(null)
       this.callbacks.onNpcInteract?.(hoveredNpc.data)
     }
 

@@ -26,6 +26,7 @@ export const createWorld = (container: HTMLElement): WorldContext => {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.domElement.tabIndex = 0
+  renderer.domElement.style.touchAction = 'none'
   container.appendChild(renderer.domElement)
 
   const hemi = new THREE.HemisphereLight(0xe7f2ff, 0x62835f, 1.4)

@@ -24,6 +24,7 @@ export class PlayerController {
   private readonly desiredMove = new THREE.Vector3()
   private readonly lateral = new THREE.Vector3()
   private readonly facing = new THREE.Vector3(0, 0, 1)
+  private readonly touchMove = new THREE.Vector2()
 
   private enabled = true
   private interactQueued = false
@@ -69,9 +70,7 @@ export class PlayerController {
         this.setMovement('right', true)
         break
       case 'e':
-        if (this.enabled && !event.repeat) {
-          this.interactQueued = true
-        }
+        if (!event.repeat) this.queueInteract()
         break
       default:
         break
@@ -112,6 +111,23 @@ export class PlayerController {
     this.movement.right = false
   }
 
+  setMoveInput(x: number, y: number) {
+    this.touchMove.set(
+      THREE.MathUtils.clamp(x, -1, 1),
+      THREE.MathUtils.clamp(y, -1, 1),
+    )
+  }
+
+  clearMoveInput() {
+    this.touchMove.set(0, 0)
+  }
+
+  queueInteract() {
+    if (this.enabled) {
+      this.interactQueued = true
+    }
+  }
+
   setBounds(bounds: WorldBounds) {
     this.bounds = bounds
   }
@@ -120,6 +136,7 @@ export class PlayerController {
     this.enabled = active
     if (!active) {
       this.clearMovement()
+      this.clearMoveInput()
     }
   }
 
@@ -152,22 +169,20 @@ export class PlayerController {
     }
 
     this.desiredMove.set(0, 0, 0)
+    const forwardInput =
+      (this.movement.forward ? 1 : 0) -
+      (this.movement.back ? 1 : 0) +
+      this.touchMove.y
+    const lateralInput =
+      (this.movement.right ? 1 : 0) -
+      (this.movement.left ? 1 : 0) +
+      this.touchMove.x
 
-    if (this.movement.forward) {
-      this.desiredMove.add(cameraForward)
-    }
-    if (this.movement.back) {
-      this.desiredMove.sub(cameraForward)
-    }
+    if (forwardInput !== 0) this.desiredMove.addScaledVector(cameraForward, forwardInput)
 
     this.lateral.crossVectors(cameraForward, up).normalize()
 
-    if (this.movement.right) {
-      this.desiredMove.add(this.lateral)
-    }
-    if (this.movement.left) {
-      this.desiredMove.sub(this.lateral)
-    }
+    if (lateralInput !== 0) this.desiredMove.addScaledVector(this.lateral, lateralInput)
 
     const isMoving = this.desiredMove.lengthSq() > 0.0001
 

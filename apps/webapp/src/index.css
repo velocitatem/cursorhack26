@@ -16,6 +16,10 @@
   --accent-hover: #c8903e;
   --error: #d56b60;
   --pill-bg: rgba(12, 18, 29, 0.84);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 
   color: var(--text-primary);
   background: var(--bg);
@@ -36,6 +40,7 @@ body,
 
 body {
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 h1,

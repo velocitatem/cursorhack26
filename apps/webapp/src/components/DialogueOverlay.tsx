@@ -78,7 +78,7 @@ export const DialogueOverlay = ({
             type="button"
             disabled={isAdvancing}
           >
-            Esc
+            Close
           </button>
         </div>
 
