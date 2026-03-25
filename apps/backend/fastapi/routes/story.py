@@ -20,6 +20,9 @@ from models.story import (
     ResolveSceneRequest,
     ResolveResponse,
     Scene,
+    SceneChoice,
+    SceneNpc,
+    SceneVector,
     SceneWorldState,
     SendResponse,
     StartSceneRequest,
@@ -131,6 +134,26 @@ async def _build_world_plan_async(emails: list[EmailItem], user_id: str) -> Worl
 def _scene_with_world_state(session: StorySession, scene: Scene, location_id: str) -> Scene:
     hydrated = scene.model_copy(deep=True)
     hydrated.choice_transitions = session.world_transitions.get(location_id, {})
+    if not hydrated.is_terminal and not hydrated.choices:
+        if hydrated.choice_transitions:
+            hydrated.choices = [
+                SceneChoice(
+                    slug=slug,
+                    label=slug.replace("_", " ").replace("-", " ").strip().title() or "Continue",
+                    intent="neutral",
+                )
+                for slug in hydrated.choice_transitions
+            ]
+        else:
+            fallback_target = next((loc for loc in session.world_locations if loc != location_id), location_id)
+            fallback_choices = [
+                SceneChoice(slug="reply_now", label="Reply now", intent="agree_immediately"),
+                SceneChoice(slug="ask_context", label="Ask for context", intent="ask_for_clarification"),
+                SceneChoice(slug="defer", label="Defer politely", intent="ask_for_more_time"),
+            ]
+            hydrated.choices = fallback_choices
+            hydrated.choice_transitions = {choice.slug: fallback_target for choice in fallback_choices}
+            session.world_transitions[location_id] = hydrated.choice_transitions
     hydrated.world = SceneWorldState(
         world_id=session.world_id or "legacy-world",
         location_id=location_id,
@@ -141,6 +164,23 @@ def _scene_with_world_state(session: StorySession, scene: Scene, location_id: st
     if hydrated.environment and hydrated.environment.layout is None:
         loc_idx = list(session.world_locations.keys()).index(location_id) if location_id in session.world_locations else 0
         hydrated.environment.layout = _simple_layout(seed=session.run_seed or 0, location_idx=loc_idx)
+    if not hydrated.npcs:
+        primary_email_id = hydrated.related_email_ids[0] if hydrated.related_email_ids else (hydrated.npc_id or "email")
+        hydrated.npcs = [
+            SceneNpc(
+                id=hydrated.npc_id or primary_email_id,
+                name=hydrated.npc_name or "NPC",
+                email_id=primary_email_id,
+                position=SceneVector(x=0, y=0, z=2),
+                opening_line=hydrated.dialogue,
+                choices=hydrated.choices,
+                related_email_ids=hydrated.related_email_ids or [primary_email_id],
+            )
+        ]
+    elif not hydrated.npcs[0].choices and hydrated.choices:
+        hydrated.npcs[0].choices = hydrated.choices
+        if not hydrated.npcs[0].related_email_ids and hydrated.related_email_ids:
+            hydrated.npcs[0].related_email_ids = hydrated.related_email_ids
     if hydrated.npcs:
         primary = hydrated.npcs[0]
         hydrated.npc_id = primary.id

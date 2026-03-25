@@ -6,12 +6,12 @@ import type {
   EmailDraft,
   EmailItem,
   InboxPreviewResponse,
-  SendResponse,
   TraceStep,
 } from './schemas'
 import type { ChoiceSelection } from './types'
 
 type RunStage = 'previewing' | 'ready' | 'generating' | 'playing' | 'review' | 'sending' | 'sent'
+type DraftReviewStatus = 'pending' | 'skipped' | 'sent' | 'failed'
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Something went wrong while talking to the story service.'
@@ -29,6 +29,8 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   const [previewEmails, setPreviewEmails] = useState<EmailItem[]>([])
   const [previewSource, setPreviewSource] = useState<InboxPreviewResponse['source']>('mock')
   const [sendResults, setSendResults] = useState<DraftSendResult[]>([])
+  const [draftReviewStatusById, setDraftReviewStatusById] = useState<Record<string, DraftReviewStatus>>({})
+  const [sendingDraftIds, setSendingDraftIds] = useState<Set<string>>(() => new Set())
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isStarting, setIsStarting] = useState(true)
@@ -59,6 +61,8 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     setPreviewEmails([])
     setPreviewSource('mock')
     setSendResults([])
+    setDraftReviewStatusById({})
+    setSendingDraftIds(new Set())
     setScene(createPlaceholderScene())
 
     try {
@@ -147,6 +151,11 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     try {
       const response = await provider.resolve(sessionId)
       setDrafts(response.drafts)
+      setDraftReviewStatusById(
+        Object.fromEntries(response.drafts.map(draft => [draft.email_id, 'pending' as const])),
+      )
+      setSendResults([])
+      setRunStage('review')
       return response
     } catch (error) {
       setError(getErrorMessage(error))
@@ -160,103 +169,70 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     if (!done || !sessionId || isResolving || drafts.length > 0 || runStage !== 'playing') {
       return
     }
-
-    let cancelled = false
-
     const resolve = async () => {
-      const response = await resolveDrafts()
-      if (!cancelled && response?.drafts) {
-        setRunStage('review')
-      }
+      await resolveDrafts()
     }
 
     void resolve()
-
-    return () => {
-      cancelled = true
-    }
   }, [done, drafts.length, isResolving, resolveDrafts, runStage, sessionId])
-
-  const sendAllDrafts = useCallback(async (): Promise<SendResponse | null> => {
-    if (!sessionId || !drafts.length) {
-      return null
-    }
-
-    setRunStage('sending')
-    setError(null)
-    try {
-      const response = await provider.sendAll(sessionId)
-      setSendResults(response.results)
-      setRunStage('sent')
-      return response
-    } catch (error) {
-      setError(getErrorMessage(error))
-      setRunStage('review')
-      return null
-    }
-  }, [drafts.length, provider, sessionId])
 
   const sendDraft = useCallback(async (emailId: string): Promise<DraftSendResult | null> => {
     if (!sessionId) return null
 
+    setError(null)
+    setSendingDraftIds(previous => new Set(previous).add(emailId))
     try {
       const result = await provider.sendDraft(sessionId, emailId)
       setSendResults(previous => {
         if (!previous.length) {
           return [result]
         }
+        if (!previous.some(entry => entry.email_id === emailId)) {
+          return [...previous, result]
+        }
         return previous.map(entry => (entry.email_id === emailId ? result : entry))
       })
+      setDraftReviewStatusById(previous => ({
+        ...previous,
+        [emailId]: result.status === 'sent' ? 'sent' : 'failed',
+      }))
       return result
     } catch (error) {
       setError(getErrorMessage(error))
+      setDraftReviewStatusById(previous => ({ ...previous, [emailId]: 'failed' }))
       return null
+    } finally {
+      setSendingDraftIds(previous => {
+        const next = new Set(previous)
+        next.delete(emailId)
+        return next
+      })
     }
   }, [provider, sessionId])
 
-  const sendSelectedDrafts = useCallback(async (emailIds: string[]): Promise<SendResponse | null> => {
-    if (!sessionId || !emailIds.length) {
-      return null
-    }
+  const toggleSkipDraft = useCallback((emailId: string) => {
+    setDraftReviewStatusById(previous => {
+      const status = previous[emailId]
+      if (status === 'sent') {
+        return previous
+      }
+      return {
+        ...previous,
+        [emailId]: status === 'skipped' ? 'pending' : 'skipped',
+      }
+    })
+  }, [])
 
-    setRunStage('sending')
+  const finishReview = useCallback(() => {
+    const hasPending = drafts.some(draft => (draftReviewStatusById[draft.email_id] ?? 'pending') === 'pending')
+    if (hasPending) {
+      setError('Review every draft before finishing. Send it or mark it as skipped.')
+      return false
+    }
     setError(null)
-
-    const settled = await Promise.allSettled(
-      emailIds.map(async emailId => {
-        try {
-          return await provider.sendDraft(sessionId, emailId)
-        } catch (error) {
-          return {
-            email_id: emailId,
-            thread_id: null,
-            gmail_message_id: null,
-            status: 'failed' as const,
-            error: getErrorMessage(error),
-          }
-        }
-      }),
-    )
-
-    const results = settled.map((entry, index) =>
-      entry.status === 'fulfilled'
-        ? entry.value
-        : {
-          email_id: emailIds[index],
-          thread_id: null,
-          gmail_message_id: null,
-          status: 'failed' as const,
-          error: getErrorMessage(entry.reason),
-        })
-
-    const response = {
-      session_id: sessionId,
-      results,
-    }
-    setSendResults(results)
     setRunStage('sent')
-    return response
-  }, [provider, sessionId])
+    return true
+  }, [draftReviewStatusById, drafts])
 
   const restart = useCallback(() => {
     void initPreview()
@@ -272,6 +248,8 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     previewEmails,
     previewSource,
     sendResults,
+    draftReviewStatusById,
+    sendingDraftIds,
     done,
     error,
     isStarting,
@@ -280,9 +258,9 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     isPreviewVisible: isPreviewVisible(runStage),
     chooseOption,
     resolveDrafts,
-    sendAllDrafts,
     sendDraft,
-    sendSelectedDrafts,
+    toggleSkipDraft,
+    finishReview,
     beginRun,
     restart,
   }

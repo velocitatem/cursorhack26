@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import default as email_policy
+from email.utils import getaddresses
 from html import unescape
 import json
 import re
@@ -30,6 +31,7 @@ GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 GMAIL_BATCH_MAX_SUBREQUESTS = 50
 DEFAULT_HTTP_TIMEOUT = httpx.Timeout(30.0)
+EMAIL_ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class GmailServiceError(RuntimeError):
@@ -466,12 +468,26 @@ def _build_today_query(now: datetime) -> str:
     return f"after:{int(start_of_day.timestamp())} before:{int(local_now.timestamp())}"
 
 
+def _extract_valid_email(header_value: str | None) -> str | None:
+    if not header_value:
+        return None
+    for _, address in getaddresses([header_value]):
+        normalized = address.strip().strip("<>")
+        if EMAIL_ADDRESS_PATTERN.fullmatch(normalized):
+            return normalized
+    return None
+
+
 def _build_reply_raw_message(
     original_headers: dict[str, str | None], draft: EmailDraft
 ) -> bytes:
-    reply_to = (draft.to or "").strip() or original_headers.get("reply_to") or original_headers.get("from")
+    reply_to = (
+        _extract_valid_email((draft.to or "").strip())
+        or _extract_valid_email(original_headers.get("reply_to"))
+        or _extract_valid_email(original_headers.get("from"))
+    )
     if not reply_to:
-        raise RuntimeError("Original message is missing recipient headers for reply.")
+        raise RuntimeError("Original message is missing a valid recipient email for reply.")
 
     original_subject = (original_headers.get("subject") or "").strip()
     subject = (draft.subject or "").strip() or (f"Re: {original_subject}" if original_subject else "Re:")

@@ -227,41 +227,31 @@ function FinaleOverlay({
   drafts,
   trace,
   sendResults,
+  draftReviewStatusById,
+  sendingDraftIds,
   runStage,
   isResolving,
   error,
-  onSendSelected,
+  onSendDraft,
+  onToggleSkipDraft,
+  onFinishReview,
   onRetryDraft,
   onRestart,
 }: {
   drafts: EmailDraft[]
   trace: TraceStep[]
   sendResults: DraftSendResult[]
+  draftReviewStatusById: Record<string, 'pending' | 'skipped' | 'sent' | 'failed'>
+  sendingDraftIds: Set<string>
   runStage: 'review' | 'sending' | 'sent'
   isResolving: boolean
   error: string | null
-  onSendSelected: (emailIds: string[]) => void
+  onSendDraft: (emailId: string) => void
+  onToggleSkipDraft: (emailId: string) => void
+  onFinishReview: () => void
   onRetryDraft: (emailId: string) => void
   onRestart: () => void
 }) {
-  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(() => new Set())
-
-  useEffect(() => {
-    setSelectedDraftIds(new Set(drafts.map(draft => draft.email_id)))
-  }, [drafts])
-
-  const toggleDraft = (emailId: string) => {
-    setSelectedDraftIds(previous => {
-      const next = new Set(previous)
-      if (next.has(emailId)) {
-        next.delete(emailId)
-      } else {
-        next.add(emailId)
-      }
-      return next
-    })
-  }
-
   const routeSummary = trace.map(step => ({
     id: `${step.scene_id}:${step.choice_slug}`,
     title: toReadableLabel(step.choice_slug),
@@ -271,14 +261,13 @@ function FinaleOverlay({
   const resultsByEmailId = new Map(sendResults.map(result => [result.email_id, result]))
   const recapRows = drafts.map(draft => {
     const result = resultsByEmailId.get(draft.email_id)
-    const status: 'sent' | 'failed' | 'skipped' = !selectedDraftIds.has(draft.email_id)
-      ? 'skipped'
-      : result?.status ?? 'failed'
+    const status = draftReviewStatusById[draft.email_id] ?? 'pending'
     return { draft, result, status }
   })
   const sentCount = recapRows.filter(row => row.status === 'sent').length
   const failedCount = recapRows.filter(row => row.status === 'failed').length
   const skippedCount = recapRows.filter(row => row.status === 'skipped').length
+  const pendingCount = recapRows.filter(row => row.status === 'pending').length
 
   if (isResolving) {
     return (
@@ -357,11 +346,13 @@ function FinaleOverlay({
                   <div className="result-meta">
                     {status === 'skipped' ? (
                       <span>Held back during final review</span>
-                    ) : (
+                    ) : status === 'sent' || status === 'failed' ? (
                       <>
                         <span>{result?.gmail_message_id ? `Message ${result.gmail_message_id}` : 'Awaiting provider id'}</span>
                         <span>{result?.thread_id ? `Thread ${result.thread_id}` : 'Thread id pending'}</span>
                       </>
+                    ) : (
+                      <span>Awaiting final action</span>
                     )}
                   </div>
 
@@ -392,7 +383,7 @@ function FinaleOverlay({
           <div>
             <p className="screen-kicker">Final Review</p>
             <h2>The route is locked.</h2>
-            <p className="prelude-copy">Review the bundle, choose what to actually send, then dispatch the checked drafts.</p>
+            <p className="prelude-copy">Review each drafted email and decide if you want to send or skip it.</p>
           </div>
           <div className="finale-actions">
             <button className="hud-button" onClick={onRestart} type="button">
@@ -400,11 +391,11 @@ function FinaleOverlay({
             </button>
             <button
               className="hud-button hud-button-primary"
-              disabled={!selectedDraftIds.size}
-              onClick={() => onSendSelected(Array.from(selectedDraftIds))}
+              disabled={pendingCount > 0}
+              onClick={onFinishReview}
               type="button"
             >
-              Send selected with agent
+              Finish review
             </button>
           </div>
         </div>
@@ -416,7 +407,7 @@ function FinaleOverlay({
                 <p className="eyebrow">Draft bundle</p>
                 <h3>Replies ready to go</h3>
               </div>
-              <span className="source-chip">{selectedDraftIds.size} selected</span>
+              <span className="source-chip">{pendingCount} pending</span>
             </div>
 
             <div className="finale-list">
@@ -424,17 +415,33 @@ function FinaleOverlay({
                 <article className="finale-email-card" key={draft.email_id}>
                   <div className="finale-email-header">
                     <p className="draft-to">To: {draft.to}</p>
-                    <label className="email-select-pill">
-                      <input
-                        checked={selectedDraftIds.has(draft.email_id)}
-                        onChange={() => toggleDraft(draft.email_id)}
-                        type="checkbox"
-                      />
-                      <span>{selectedDraftIds.has(draft.email_id) ? 'Send' : 'Skip'}</span>
-                    </label>
+                    <span className={`result-badge result-badge-${draftReviewStatusById[draft.email_id] ?? 'pending'}`}>
+                      {draftReviewStatusById[draft.email_id] ?? 'pending'}
+                    </span>
                   </div>
                   <h3>{draft.subject}</h3>
                   <p>{draft.body}</p>
+                  <div className="story-actions">
+                    <button
+                      className="hud-button hud-button-primary"
+                      disabled={
+                        (draftReviewStatusById[draft.email_id] ?? 'pending') === 'sent' ||
+                        sendingDraftIds.has(draft.email_id)
+                      }
+                      onClick={() => onSendDraft(draft.email_id)}
+                      type="button"
+                    >
+                      {sendingDraftIds.has(draft.email_id) ? 'Sending...' : 'Send'}
+                    </button>
+                    <button
+                      className="hud-button"
+                      disabled={(draftReviewStatusById[draft.email_id] ?? 'pending') === 'sent'}
+                      onClick={() => onToggleSkipDraft(draft.email_id)}
+                      type="button"
+                    >
+                      {(draftReviewStatusById[draft.email_id] ?? 'pending') === 'skipped' ? 'Unskip' : 'Skip'}
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>
@@ -485,6 +492,8 @@ function GameShell({
     previewEmails,
     previewSource,
     sendResults,
+    draftReviewStatusById,
+    sendingDraftIds,
     done,
     error,
     isStarting,
@@ -492,8 +501,9 @@ function GameShell({
     isResolving,
     isPreviewVisible,
     chooseOption,
-    sendSelectedDrafts,
     sendDraft,
+    toggleSkipDraft,
+    finishReview,
     beginRun,
     restart,
   } = useSceneLoader({ userId })
@@ -577,16 +587,18 @@ function GameShell({
     restart()
   }, [closeDialogue, restart, stopDialogueAudio])
 
-  const handleSendSelected = useCallback((emailIds: string[]) => {
-    void sendSelectedDrafts(emailIds)
-  }, [sendSelectedDrafts])
-
-  const handleRetryDraft = useCallback(
+  const handleSendDraft = useCallback(
     (emailId: string) => {
       void sendDraft(emailId)
     },
     [sendDraft],
   )
+  const handleToggleSkipDraft = useCallback((emailId: string) => {
+    toggleSkipDraft(emailId)
+  }, [toggleSkipDraft])
+  const handleFinishReview = useCallback(() => {
+    finishReview()
+  }, [finishReview])
   const handleRuntimeReady = useCallback((controls: GameRuntimeControls | null) => {
     setRuntimeControls(controls)
   }, [])
@@ -713,11 +725,15 @@ function GameShell({
           drafts={drafts}
           trace={trace}
           sendResults={sendResults}
+          draftReviewStatusById={draftReviewStatusById}
+          sendingDraftIds={sendingDraftIds}
           runStage={finaleStage}
           isResolving={isResolving}
           error={error}
-          onSendSelected={handleSendSelected}
-          onRetryDraft={handleRetryDraft}
+          onSendDraft={handleSendDraft}
+          onToggleSkipDraft={handleToggleSkipDraft}
+          onFinishReview={handleFinishReview}
+          onRetryDraft={handleSendDraft}
           onRestart={handleRestart}
         />
       ) : null}

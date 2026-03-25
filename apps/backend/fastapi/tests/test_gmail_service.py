@@ -25,8 +25,10 @@ from services.gmail import (  # noqa: E402
     GMAIL_READONLY_SCOPE,
     GmailRequestError,
     GOOGLE_TOKEN_URL,
+    _build_reply_raw_message,
     list_todays_emails,
 )
+from models.story import EmailDraft  # noqa: E402
 
 
 def make_settings() -> Settings:
@@ -340,3 +342,25 @@ def test_list_todays_emails_paginates_until_success_limit(monkeypatch):
 
     assert [item.id for item in items] == ["msg-4", "msg-3", "msg-2"]
     assert list_request_page_tokens == [None, "page-2"]
+
+
+def test_build_reply_raw_message_uses_valid_fallback_recipient():
+    draft = EmailDraft(
+        email_id="email-1",
+        to="Emma Rossi <unknown>",
+        subject="Re: Application",
+        body="Thanks for your application.",
+    )
+    raw = _build_reply_raw_message(
+        {
+            "message_id": "<message-1@example.com>",
+            "references": "<message-0@example.com>",
+            "subject": "Application",
+            "from": "Daniel Weber <daniel.weber@example.com>",
+            "reply_to": None,
+        },
+        draft,
+    )
+    text = raw.decode("utf-8", errors="replace")
+    assert "To: daniel.weber@example.com" in text
+    assert "Subject: Re: Application" in text

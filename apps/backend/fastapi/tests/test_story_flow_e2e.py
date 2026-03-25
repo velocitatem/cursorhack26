@@ -272,6 +272,74 @@ def test_story_start_uses_world_plan(monkeypatch):
     assert body["scene"]["choice_transitions"]["go-next"] == "loc-2"
 
 
+def test_story_start_repairs_non_terminal_scene_without_choices(monkeypatch):
+    app = FastAPI()
+    app.include_router(story_router)
+
+    inbox = [
+        {"id": "email-1", "sender": "manager@company.com", "subject": "Need status update by EOD", "snippet": "Send update."},
+        {"id": "email-2", "sender": "client@startup.io", "subject": "Follow-up on proposal", "snippet": "Need timeline."},
+    ]
+
+    broken_scene = Scene.model_validate(
+        {
+            "scene_id": "scene-broken",
+            "npc_id": "email-1",
+            "npc_name": "Manager Steve",
+            "dialogue": "Status request is pending and needs a response.",
+            "choices": [],
+            "is_terminal": False,
+            "related_email_ids": ["email-1"],
+            "npcs": [],
+        }
+    )
+    terminal_scene = Scene.model_validate(
+        {
+            "scene_id": "scene-terminal",
+            "npc_id": "email-2",
+            "npc_name": "Client Builder",
+            "dialogue": "Route complete.",
+            "choices": [],
+            "is_terminal": True,
+            "related_email_ids": ["email-2"],
+        }
+    )
+    world_plan = WorldPlan(
+        world_id="world-broken",
+        entry_location_id="loc-1",
+        locations=[
+            WorldLocation(id="loc-1", scene=broken_scene, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+            WorldLocation(id="loc-2", scene=terminal_scene, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+        ],
+        transitions={"loc-1": {"reply_now": "loc-2"}, "loc-2": {}},
+    )
+
+    monkeypatch.setattr(
+        "routes.story.build_world_plan",
+        lambda emails, user_id, max_locations=5, run_seed=None: WorldPlanBuild(
+            plan=world_plan,
+            source="test",
+            run_seed=run_seed or 0,
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.ensure_scene_entry",
+        lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
+    )
+    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr("routes.story.SESSIONS", {})
+
+    client = TestClient(app)
+    start = client.post("/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox})
+    assert start.status_code == 200
+    body = start.json()
+    assert body["scene"]["is_terminal"] is False
+    assert len(body["scene"]["choices"]) == 1
+    assert body["scene"]["choices"][0]["slug"] == "reply_now"
+    assert body["scene"]["npcs"]
+    assert body["scene"]["npcs"][0]["choices"][0]["slug"] == "reply_now"
+
+
 def test_scene_tts_stream_cache_hit(monkeypatch):
     app = FastAPI()
     app.include_router(story_router)

@@ -245,6 +245,31 @@ def resolve_emails(
     result = json.loads(data["choices"][0]["message"]["content"])
     if _cache_enabled():
         set_json(cache_key, result, ttl_seconds=openai_cache_ttl_seconds())
-    drafts = [EmailDraft.model_validate(d) for d in result["drafts"]]
-    log.info("resolve_emails_ok draft_count=%s", len(drafts))
-    return drafts
+    resolved_by_email_id: dict[str, EmailDraft] = {}
+    for raw_draft in result.get("drafts", []):
+        try:
+            draft = EmailDraft.model_validate(raw_draft)
+        except Exception:
+            continue
+        if draft.email_id and draft.email_id not in resolved_by_email_id:
+            resolved_by_email_id[draft.email_id] = draft
+    fallback_note = (
+        "Thanks for your email. I received this and will follow up shortly with the right next steps."
+    )
+    complete_drafts = [
+        resolved_by_email_id.get(email.id)
+        or EmailDraft(
+            email_id=email.id,
+            to=email.sender,
+            subject=f"Re: {email.subject}",
+            body=email_context_by_id.get(email.id) or fallback_note,
+        )
+        for email in emails
+    ]
+    log.info(
+        "resolve_emails_ok draft_count=%s requested_emails=%s missing_filled=%s",
+        len(complete_drafts),
+        len(emails),
+        sum(1 for email in emails if email.id not in resolved_by_email_id),
+    )
+    return complete_drafts
