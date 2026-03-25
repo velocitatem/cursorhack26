@@ -958,6 +958,49 @@
 
   .story-status-card {
     width: min(100%, calc(100vw - var(--safe-left) - var(--safe-right) - 32px));
+    padding: 14px 16px;
+    cursor: pointer;
+  }
+
+  .story-hud--collapsed .story-status-card {
+    width: auto;
+    padding: 10px 16px;
+  }
+
+  .story-collapsed-hint {
+    font-size: 0.7rem;
+    opacity: 0.5;
+    margin-top: 2px;
+  }
+
+  .story-title {
+    font-size: 1.15rem;
+  }
+
+  .story-objective {
+    font-size: 0.85rem;
+    margin-top: 4px;
+  }
+
+  .story-meta {
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.75rem;
+  }
+
+  .story-actions {
+    margin-top: 10px;
+    gap: 8px;
+  }
+
+  .story-actions .hud-button {
+    padding: 7px 14px;
+    font-size: 0.85rem;
+  }
+
+  .story-note {
+    font-size: 0.8rem;
+    margin-top: 6px;
   }
 
   .dialogue-overlay {

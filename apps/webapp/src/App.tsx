@@ -413,6 +413,7 @@ function GameShell({
     })
   const [runtimeControls, setRuntimeControls] = useState<GameRuntimeControls | null>(null)
   const [interactionTarget, setInteractionTarget] = useState<SceneNpc | null>(null)
+  const [hudCollapsed, setHudCollapsed] = useState(true)
   const isCoarsePointer = useCoarsePointer()
 
   const isBusy = isStarting || isAdvancing || isResolving || runStage === 'sending'
@@ -529,34 +530,43 @@ function GameShell({
       )}
 
       {showHud ? (
-        <section className="story-hud">
-          <div className="story-status-card">
+        <section className={`story-hud ${hudCollapsed && isCoarsePointer ? 'story-hud--collapsed' : ''}`}>
+          <div
+            className="story-status-card"
+            onClick={isCoarsePointer ? () => setHudCollapsed(c => !c) : undefined}
+          >
             <p className="eyebrow">Story route</p>
-            <h1 className="story-title">{scene.title}</h1>
-            <p className="story-objective">{scene.objective}</p>
+            {!(hudCollapsed && isCoarsePointer) ? (
+              <>
+                <h1 className="story-title">{scene.title}</h1>
+                <p className="story-objective">{scene.objective}</p>
 
-            <div className="story-meta">
-              <span>Mode: {mode}</span>
-              <span>Choices locked: {trace.length}</span>
-              <span>{sessionId ? 'Session live' : 'No session yet'}</span>
-            </div>
+                <div className="story-meta">
+                  <span>Mode: {mode}</span>
+                  <span>Choices locked: {trace.length}</span>
+                  <span>{sessionId ? 'Session live' : 'No session yet'}</span>
+                </div>
 
-            {scene.completionMessage ? (
-              <p className="story-completion">{scene.completionMessage}</p>
-            ) : null}
+                {scene.completionMessage ? (
+                  <p className="story-completion">{scene.completionMessage}</p>
+                ) : null}
 
-            {error ? <p className="story-error">{error}</p> : null}
+                {error ? <p className="story-error">{error}</p> : null}
 
-            <div className="story-actions">
-              <button className="hud-button" onClick={handleRestart} type="button" disabled={isBusy}>
-                Restart run
-              </button>
-            </div>
+                <div className="story-actions">
+                  <button className="hud-button" onClick={(e) => { e.stopPropagation(); handleRestart(); }} type="button" disabled={isBusy}>
+                    Restart run
+                  </button>
+                </div>
 
-            {isAdvancing ? <p className="story-note">Locking in the next branch.</p> : null}
-            {!done && !isAdvancing ? (
-              <p className="story-note">{interactionHint}</p>
-            ) : null}
+                {isAdvancing ? <p className="story-note">Locking in the next branch.</p> : null}
+                {!done && !isAdvancing ? (
+                  <p className="story-note">{interactionHint}</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="story-collapsed-hint">Tap to expand</p>
+            )}
           </div>
         </section>
       ) : null}
