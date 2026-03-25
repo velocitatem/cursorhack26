@@ -1,4 +1,14 @@
-![](./banner.svg)
+<div align="center">
+  <img src="./banner.svg" alt="Inbox RPG" />
+
+  <p align="center">
+    <a href="https://react.dev"><img src="https://img.shields.io/badge/React-19.2-blue?style=flat&logo=react&logoColor=white" alt="React 19" /></a>
+    <a href="https://threejs.org/"><img src="https://img.shields.io/badge/Three.js-Black?style=flat&logo=three.js&logoColor=white" alt="Three.js" /></a>
+    <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white" alt="FastAPI" /></a>
+    <a href="https://openai.com/"><img src="https://img.shields.io/badge/OpenAI-412991?style=flat&logo=openai&logoColor=white" alt="OpenAI" /></a>
+    <a href="https://elevenlabs.io/"><img src="https://img.shields.io/badge/ElevenLabs-000000?style=flat&logo=elevenlabs&logoColor=white" alt="ElevenLabs" /></a>
+  </p>
+</div>
 
 Turn your daily email triage into a 3D roleplaying game you will actually want to play.
 

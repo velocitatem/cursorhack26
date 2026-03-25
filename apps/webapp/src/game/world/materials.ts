@@ -97,17 +97,17 @@ const materials: MaterialRecord = {
     opacity: 0.75,
   }),
   plaza: new THREE.MeshStandardMaterial({
-    color: 0xa0a6b2,
+    color: 0x0a2a22,
     roughness: 0.9,
     metalness: 0.05,
   }),
   mail: new THREE.MeshStandardMaterial({
-    color: 0xf0b54a,
+    color: 0xffb830,
     roughness: 0.7,
     metalness: 0.15,
   }),
   accent: new THREE.MeshStandardMaterial({
-    color: 0x5fa8ff,
+    color: 0x00d4a0,
     roughness: 0.55,
     metalness: 0.1,
   }),
