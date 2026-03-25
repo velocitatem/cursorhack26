@@ -6,20 +6,15 @@ type AuthGateProps = {
 export function AuthGate({ authError, onContinue }: AuthGateProps) {
   return (
     <main className="auth-shell">
-      <p className="auth-brand">Holodeck</p>
+      <p className="auth-brand">Inbox Quest</p>
       <section className="auth-panel">
-        <span className="auth-corner auth-corner-tl" aria-hidden="true" />
-        <span className="auth-corner auth-corner-tr" aria-hidden="true" />
-        <span className="auth-corner auth-corner-bl" aria-hidden="true" />
-        <span className="auth-corner auth-corner-br" aria-hidden="true" />
-        <p className="auth-kicker">SYS: READY</p>
-        <h1 className="auth-title">Your inbox is now a game.</h1>
-        <p className="auth-copy">Email, but finally not miserable.</p>
-        <p className="auth-tagline">Less dread. More flow. Same work, better experience.</p>
+        <h1 className="auth-title">Play through today&apos;s mail.</h1>
+        <p className="auth-copy">Walk the block world, talk to threads as NPCs, then send what you meant to send.</p>
+        <p className="auth-tagline">One short run. Real drafts at the end.</p>
         <div className="auth-pitch">
           <p>
-            Holodeck turns today&apos;s inbox into a story-driven run. Talk to characters, make decisions, and clear your
-            queue without the usual drag.
+            Today&apos;s inbox becomes a short story run: talk to characters, pick branches, then review and send the
+            drafts you chose.
           </p>
           <ul className="auth-flow">
             <li>Emails become characters, scenes, and choices.</li>
