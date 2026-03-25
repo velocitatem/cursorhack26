@@ -28,6 +28,10 @@ export default defineConfig(({ mode }) => {
         allow: [workspaceRoot],
       },
       proxy: {
+        '/auth': {
+          target: storyApiTarget,
+          changeOrigin: true,
+        },
         '/health': {
           target: storyApiTarget,
           changeOrigin: true,
