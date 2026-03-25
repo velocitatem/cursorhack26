@@ -6,11 +6,11 @@ import { DialogueOverlay } from './components/DialogueOverlay'
 import { MobileControls } from './components/MobileControls'
 import { WorldCanvas } from './components/WorldCanvas'
 import type { GameRuntimeControls } from './game/runtime/useGameRuntime'
+import type { DraftSendResult, EmailDraft, EmailItem, InboxPreviewResponse, TraceStep } from './game/story/schemas'
+import type { SceneNpc } from './game/story/types'
 import { useDialogueAudio } from './game/story/useDialogueAudio'
 import { useDialogueState } from './game/story/useDialogueState'
 import { useSceneLoader } from './game/story/useSceneLoader'
-import type { DraftSendResult, EmailDraft, EmailItem, InboxPreviewResponse, TraceStep } from './game/story/schemas'
-import type { SceneNpc } from './game/story/types'
 
 const previewSourceLabels: Record<InboxPreviewResponse['source'], string> = {
   gmail: 'Live Gmail',
@@ -138,7 +138,6 @@ function PreludeOverlay({
           </div>
 
           <div className="prelude-status-card">
-            <div className="status-ring" aria-hidden="true" />
             <div>
               <p className="eyebrow">Story build</p>
               <h2>{statusTitle}</h2>
@@ -779,10 +778,10 @@ function App() {
   if (isLoading) {
     return (
       <main className="loading-shell">
-        <p className="auth-brand">Holodeck</p>
-        <p className="auth-kicker">SYS INIT</p>
-        <h1 className="auth-title">Holodeck calibrating emitters.</h1>
-        <p className="auth-copy">Validating holodeck session token.</p>
+        <p className="auth-brand">Inbox Quest</p>
+        <p className="auth-kicker">Loading</p>
+        <h1 className="auth-title">Getting your session ready.</h1>
+        <p className="auth-copy">This only takes a moment.</p>
       </main>
     )
   }
