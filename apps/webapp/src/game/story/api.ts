@@ -3,13 +3,17 @@ import {
   advanceSceneRequestSchema,
   advanceSceneResponseSchema,
   draftSendResultSchema,
+  inboxPreviewResponseSchema,
   resolveResponseSchema,
+  sendResponseSchema,
   startSceneRequestSchema,
   startSceneResponseSchema,
   type AdvanceSceneRequest,
   type AdvanceSceneResponse,
   type DraftSendResult,
+  type InboxPreviewResponse,
   type ResolveResponse,
+  type SendResponse,
   type StartSceneRequest,
   type StartSceneResponse,
 } from './schemas'
@@ -82,6 +86,28 @@ export class StoryApiClient {
     )
   }
 
+  async preview(request: StartSceneRequest = {}): Promise<InboxPreviewResponse> {
+    const body = startSceneRequestSchema.parse(request)
+    return this.request(
+      '/story/scene/preview',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      payload => {
+        try {
+          return inboxPreviewResponseSchema.parse(payload)
+        } catch (error) {
+          if (error instanceof ZodError) {
+            throw new Error(formatValidationError('/story/scene/preview', error))
+          }
+          throw error
+        }
+      },
+    )
+  }
+
   async advance(sessionId: string, request: AdvanceSceneRequest): Promise<AdvanceSceneResponse> {
     const body = advanceSceneRequestSchema.parse(request)
     return this.request(
@@ -131,6 +157,23 @@ export class StoryApiClient {
         } catch (error) {
           if (error instanceof ZodError) {
             throw new Error(formatValidationError('/story/scene/:session_id/send/:email_id', error))
+          }
+          throw error
+        }
+      },
+    )
+  }
+
+  async sendAll(sessionId: string): Promise<SendResponse> {
+    return this.request(
+      `/story/scene/${sessionId}/send`,
+      { method: 'POST' },
+      payload => {
+        try {
+          return sendResponseSchema.parse(payload)
+        } catch (error) {
+          if (error instanceof ZodError) {
+            throw new Error(formatValidationError('/story/scene/:session_id/send', error))
           }
           throw error
         }

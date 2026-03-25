@@ -8,14 +8,14 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --bg: #0c0f14;
-  --surface: #16191f;
-  --text-primary: #e8eaed;
-  --text-muted: #7a7f88;
+  --bg: #070b12;
+  --surface: #121927;
+  --text-primary: #f4f7fb;
+  --text-muted: #91a0b2;
   --accent: #e2a64b;
   --accent-hover: #c8903e;
-  --error: #d4644a;
-  --pill-bg: rgba(22, 25, 31, 0.85);
+  --error: #d56b60;
+  --pill-bg: rgba(12, 18, 29, 0.84);
 
   color: var(--text-primary);
   background: var(--bg);

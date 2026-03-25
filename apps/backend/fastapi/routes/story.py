@@ -16,6 +16,7 @@ from models.story import (
     DraftSendResult,
     EmailDraft,
     EmailItem,
+    InboxPreviewResponse,
     ResolveSceneRequest,
     ResolveResponse,
     Scene,
@@ -75,24 +76,36 @@ def _mock_emails() -> list[EmailItem]:
     ]
 
 
-async def _load_emails(body: StartSceneRequest, repo: AuthRepository) -> list[EmailItem]:
-    if body.inbox_override:
-        return body.inbox_override
-    try:
-        token = await asyncio.to_thread(repo.get_google_credentials_for_user, body.user_id)
-    except Exception:
-        log.info("gmail_inbox_token_lookup_failed user_id=%s", body.user_id)
-        token = None
+async def _load_emails_with_source(
+    body: StartSceneRequest,
+    repo: AuthRepository | None,
+) -> tuple[list[EmailItem], str]:
+    if body.inbox_override is not None:
+        return body.inbox_override, "override"
+
+    token = None
+    if repo is not None:
+        try:
+            token = await asyncio.to_thread(repo.get_google_credentials_for_user, body.user_id)
+        except Exception:
+            log.info("gmail_inbox_token_lookup_failed user_id=%s", body.user_id)
+
     if token:
         try:
             emails, _ = await list_todays_emails(token)
             if emails:
                 log.info("gmail_inbox_loaded user_id=%s count=%s", body.user_id, len(emails))
-                return emails
+                return emails, "gmail"
         except GmailServiceError:
             log.warning("gmail_inbox_load_failed user_id=%s", body.user_id, exc_info=True)
+
     log.info("gmail_inbox_fallback_mock user_id=%s", body.user_id)
-    return _mock_emails()
+    return _mock_emails(), "mock"
+
+
+async def _load_emails(body: StartSceneRequest, repo: AuthRepository | None) -> list[EmailItem]:
+    emails, _ = await _load_emails_with_source(body, repo)
+    return emails
 
 
 async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) -> Scene:
@@ -171,9 +184,16 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
         session.preloaded_by_choice = preload_results
 
 
+@router.post("/preview", response_model=InboxPreviewResponse)
+async def preview_scene(body: StartSceneRequest, request: Request) -> InboxPreviewResponse:
+    repo = getattr(request.app.state, "auth_repository", None)
+    emails, source = await _load_emails_with_source(body, repo)
+    return InboxPreviewResponse(emails=emails, source=source)
+
+
 @router.post("/start", response_model=StartSceneResponse)
 async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneResponse:
-    repo: AuthRepository = request.app.state.auth_repository
+    repo = getattr(request.app.state, "auth_repository", None)
     emails = await _load_emails(body, repo)
     if not emails:
         log.warning("start_scene_rejected reason=no_emails user_id=%s", body.user_id)

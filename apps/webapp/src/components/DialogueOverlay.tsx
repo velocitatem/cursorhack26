@@ -106,7 +106,7 @@ export const DialogueOverlay = ({
             ))}
           </div>
         ) : (
-          <p className="dialogue-status">No more branching choices here. Use the HUD to resolve the draft bundle.</p>
+          <p className="dialogue-status">No more branching choices here. The final review opens automatically.</p>
         )}
 
         {isAdvancing ? (
