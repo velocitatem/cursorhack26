@@ -101,6 +101,9 @@ export const DialogueOverlay = ({
                 <div className="choice-body">
                   <span className="choice-title">{choice.label}</span>
                   <span className="choice-preview">{choice.previewReply}</span>
+                  {choice.nextSceneId ? (
+                    <span className="choice-preview">Leads to {choice.nextSceneId.replace(/[-_]+/g, ' ')}.</span>
+                  ) : null}
                 </div>
               </button>
             ))}

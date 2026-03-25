@@ -1,10 +1,16 @@
 import * as THREE from 'three'
 import { VoxelTerrain, type WorldBounds } from './terrain'
+import type { VoxelMaterialType } from './materials'
 import type { SceneTheme } from '../story/types'
 
 export type DemoMap = {
   group: THREE.Group
   bounds: WorldBounds
+}
+
+type SceneLayoutPayload = {
+  bounds: WorldBounds
+  blocks: { x: number; y: number; z: number; type: string }[]
 }
 
 const defaultBounds: WorldBounds = {
@@ -88,8 +94,38 @@ const buildCityBlock = (terrain: VoxelTerrain) => {
   addBench(terrain, 8, 0)
 }
 
-export const buildDemoMap = (theme: SceneTheme): DemoMap => {
+const allowedTypes = new Set<VoxelMaterialType>([
+  'grass',
+  'dirt',
+  'stone',
+  'tree',
+  'wood',
+  'leaf',
+  'sand',
+  'glass',
+  'plaza',
+  'mail',
+  'accent',
+])
+
+const toBlockType = (value: string): VoxelMaterialType =>
+  allowedTypes.has(value as VoxelMaterialType) ? (value as VoxelMaterialType) : 'stone'
+
+const buildFromLayout = (terrain: VoxelTerrain, layout: SceneLayoutPayload) => {
+  for (const block of layout.blocks) {
+    terrain.addBlock(block.x, block.y, block.z, toBlockType(block.type))
+  }
+}
+
+export const buildDemoMap = (theme: SceneTheme, layout?: SceneLayoutPayload): DemoMap => {
   const terrain = new VoxelTerrain()
+  if (layout) {
+    buildFromLayout(terrain, layout)
+    return {
+      group: terrain.group,
+      bounds: layout.bounds,
+    }
+  }
 
   if (theme === 'cityBlock') {
     buildCityBlock(terrain)

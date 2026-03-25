@@ -13,6 +13,7 @@ sys.path.insert(0, str(base_dir))
 sys.path.insert(0, str(repo_root))
 
 from models.story import EmailDraft, Scene  # noqa: E402
+from models.world import WorldLocation, WorldPlan  # noqa: E402
 from routes.story import StorySession, router as story_router  # noqa: E402
 from services.tts import SceneTTSCacheEntry  # noqa: E402
 
@@ -141,8 +142,12 @@ def test_story_scene_flow_end_to_end(monkeypatch):
             ),
         ]
 
+    def fake_world_plan(emails, user_id, max_locations=4):
+        raise RuntimeError("planner unavailable")
+
     monkeypatch.setattr("routes.story.build_scene", fake_build_scene)
     monkeypatch.setattr("routes.story.resolve_emails", fake_resolve_emails)
+    monkeypatch.setattr("routes.story.build_world_plan", fake_world_plan)
     monkeypatch.setattr(
         "routes.story.ensure_scene_entry",
         lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
@@ -182,6 +187,8 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     assert advance_json["trace"][0]["choice_intent"] == "agree_immediately"
     assert advance_json["trace"][0]["choice_context"] == "timeline 6 weeks, budget 20k max"
     assert advance_json["trace"][0]["related_email_ids"] == ["email-1"]
+    assert advance_json["trace"][0]["from_location_id"] == ""
+    assert advance_json["trace"][0]["to_location_id"] == ""
 
     resolve = client.post(
         f"/story/scene/{session_id}/resolve",
@@ -198,6 +205,64 @@ def test_story_scene_flow_end_to_end(monkeypatch):
         "email-1",
         "email-2",
     }
+
+
+def test_story_start_uses_world_plan(monkeypatch):
+    app = FastAPI()
+    app.include_router(story_router)
+
+    inbox = [
+        {"id": "email-1", "sender": "manager@company.com", "subject": "Need status update by EOD", "snippet": "Send update."},
+        {"id": "email-2", "sender": "client@startup.io", "subject": "Follow-up on proposal", "snippet": "Need timeline."},
+    ]
+
+    scene_start = Scene.model_validate(
+        {
+            "scene_id": "scene-loc-1",
+            "npc_id": "email-1",
+            "npc_name": "Manager Steve",
+            "dialogue": "Send update now. Keep it concise.",
+            "choices": [{"slug": "go-next", "label": "Go next", "intent": "agree_immediately"}],
+            "is_terminal": False,
+            "related_email_ids": ["email-1"],
+        }
+    )
+    scene_end = Scene.model_validate(
+        {
+            "scene_id": "scene-loc-2",
+            "npc_id": "email-2",
+            "npc_name": "Client Builder",
+            "dialogue": "Wrap up route. Confirm timeline.",
+            "choices": [],
+            "is_terminal": True,
+            "related_email_ids": ["email-2"],
+        }
+    )
+    world_plan = WorldPlan(
+        world_id="world-demo",
+        entry_location_id="loc-1",
+        locations=[
+            WorldLocation(id="loc-1", scene=scene_start, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+            WorldLocation(id="loc-2", scene=scene_end, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+        ],
+        transitions={"loc-1": {"go-next": "loc-2"}, "loc-2": {}},
+    )
+
+    monkeypatch.setattr("routes.story.build_world_plan", lambda emails, user_id, max_locations=4: world_plan)
+    monkeypatch.setattr(
+        "routes.story.ensure_scene_entry",
+        lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
+    )
+    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr("routes.story.SESSIONS", {})
+
+    client = TestClient(app)
+    start = client.post("/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox})
+    assert start.status_code == 200
+    body = start.json()
+    assert body["scene"]["world"]["world_id"] == "world-demo"
+    assert body["scene"]["world"]["location_id"] == "loc-1"
+    assert body["scene"]["choice_transitions"]["go-next"] == "loc-2"
 
 
 def test_scene_tts_stream_cache_hit(monkeypatch):

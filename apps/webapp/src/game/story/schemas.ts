@@ -15,6 +15,56 @@ export const sceneChoiceSchema = z.object({
   intent: z.string().min(1).default('neutral'),
 })
 
+const sceneVectorSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  z: z.number(),
+})
+
+const sceneBoundsSchema = z.object({
+  minX: z.number().int(),
+  maxX: z.number().int(),
+  minZ: z.number().int(),
+  maxZ: z.number().int(),
+})
+
+const sceneBlockSchema = z.object({
+  x: z.number().int(),
+  y: z.number().int(),
+  z: z.number().int(),
+  type: z.string().min(1),
+})
+
+const sceneLayoutSchema = z.object({
+  seed: z.number().int().default(0),
+  bounds: sceneBoundsSchema,
+  blocks: z.array(sceneBlockSchema).default([]),
+})
+
+const sceneEnvironmentSchema = z.object({
+  theme: z.string().default('inboxPlaza'),
+  spawn: sceneVectorSchema,
+  layout: sceneLayoutSchema.nullable().optional(),
+})
+
+const sceneWorldSchema = z.object({
+  world_id: z.string().min(1),
+  location_id: z.string().min(1),
+  visited_location_ids: z.array(z.string()).default([]),
+})
+
+const sceneNpcSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  email_id: z.string().min(1),
+  position: sceneVectorSchema,
+  opening_line: z.string().min(1),
+  tts: z.string().default(''),
+  voice_id: z.string().nullable().optional(),
+  choices: z.array(sceneChoiceSchema).default([]),
+  related_email_ids: z.array(z.string()).default([]),
+})
+
 export const sceneSchema = z.object({
   scene_id: z.string().min(1),
   npc_id: z.string().min(1),
@@ -25,6 +75,13 @@ export const sceneSchema = z.object({
   choices: z.array(sceneChoiceSchema).default([]),
   is_terminal: z.boolean().default(false),
   related_email_ids: z.array(z.string()).default([]),
+  environment: sceneEnvironmentSchema.default({
+    theme: 'inboxPlaza',
+    spawn: { x: 0, y: 0, z: 8 },
+  }),
+  world: sceneWorldSchema.nullable().optional(),
+  npcs: z.array(sceneNpcSchema).default([]),
+  choice_transitions: z.record(z.string(), z.string()).default({}),
 })
 
 export const traceStepSchema = z.object({
@@ -32,7 +89,10 @@ export const traceStepSchema = z.object({
   npc_id: z.string().default(''),
   choice_slug: z.string(),
   choice_intent: z.string().default('neutral'),
+  choice_context: z.string().default(''),
   related_email_ids: z.array(z.string()).default([]),
+  from_location_id: z.string().default(''),
+  to_location_id: z.string().default(''),
 })
 
 export const startSceneRequestSchema = z.object({
@@ -47,6 +107,7 @@ export const inboxPreviewResponseSchema = z.object({
 
 export const advanceSceneRequestSchema = z.object({
   choice_slug: z.string().min(1),
+  choice_context: z.string().optional(),
 })
 
 export const startSceneResponseSchema = z.object({

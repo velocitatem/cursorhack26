@@ -5,6 +5,44 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+class SceneVector(BaseModel):
+    x: float
+    y: float
+    z: float
+
+
+class SceneWorldBounds(BaseModel):
+    minX: int
+    maxX: int
+    minZ: int
+    maxZ: int
+
+
+class SceneBlock(BaseModel):
+    x: int
+    y: int
+    z: int
+    type: str = Field(min_length=1)
+
+
+class SceneLayout(BaseModel):
+    seed: int = 0
+    bounds: SceneWorldBounds
+    blocks: list[SceneBlock] = Field(default_factory=list)
+
+
+class SceneEnvironment(BaseModel):
+    theme: str = "inboxPlaza"
+    spawn: SceneVector = Field(default_factory=lambda: SceneVector(x=0, y=0, z=8))
+    layout: SceneLayout | None = None
+
+
+class SceneWorldState(BaseModel):
+    world_id: str = Field(min_length=1)
+    location_id: str = Field(min_length=1)
+    visited_location_ids: list[str] = Field(default_factory=list)
+
+
 class EmailItem(BaseModel):
     id: str
     sender: str
@@ -21,6 +59,18 @@ class SceneChoice(BaseModel):
     intent: str = Field(min_length=1, default="neutral")
 
 
+class SceneNpc(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    email_id: str = Field(min_length=1)
+    position: SceneVector
+    opening_line: str = Field(min_length=1)
+    tts: str = ""
+    voice_id: str | None = None
+    choices: list[SceneChoice] = Field(default_factory=list)
+    related_email_ids: list[str] = Field(default_factory=list)
+
+
 class Scene(BaseModel):
     scene_id: str = Field(min_length=1)
     npc_id: str = Field(min_length=1)
@@ -31,6 +81,10 @@ class Scene(BaseModel):
     choices: list[SceneChoice] = Field(default_factory=list)
     is_terminal: bool = False
     related_email_ids: list[str] = Field(default_factory=list)
+    environment: SceneEnvironment = Field(default_factory=SceneEnvironment)
+    world: SceneWorldState | None = None
+    npcs: list[SceneNpc] = Field(default_factory=list)
+    choice_transitions: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("choices")
     @classmethod
@@ -60,6 +114,8 @@ class TraceStep(BaseModel):
     choice_intent: str = "neutral"
     choice_context: str = ""
     related_email_ids: list[str] = Field(default_factory=list)
+    from_location_id: str = ""
+    to_location_id: str = ""
 
 
 class StartSceneResponse(BaseModel):
