@@ -17,4 +17,4 @@ pydantic
 celery[redis]
 redis
 
-anthropic
+openai

@@ -99,7 +99,7 @@ src/                  Simple scripts / CLI
 
 ## AI / Agent SDK
 
-`ANTHROPIC_API_KEY` is required for AI features. `alveslib.agent` provides:
+`OPENAI_API_KEY` is required for AI features. `alveslib.agent` provides:
 
 ```python
 from alveslib import ask, stream, Agent

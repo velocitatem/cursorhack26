@@ -13,7 +13,7 @@ Email is a chore. By framing your inbox as a short, structured game with concret
 Get the local environment and web app running:
 
 ```bash
-cp .env.example .env        # Add your ANTHROPIC_API_KEY and other vars
+cp .env.example .env        # Add your OPENAI_API_KEY and other vars
 make init                   # Create uv venv, sync dependencies, and link envs
 make up                     # Start local backend services (Redis, Postgres)
 make dev                    # Start the Next.js webapp at http://localhost:3000
@@ -42,6 +42,6 @@ Essential environment variables for the core game loop:
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | Required to power the AI agent and scene generation |
+| `OPENAI_API_KEY` | Required to power the AI agent and scene generation |
 | `NEXT_PUBLIC_REQUIRE_AUTH` | Set to `true` to enable session-based auth gating |
 | `BACKEND_MODE` | Set to `fastapi` to route requests correctly |

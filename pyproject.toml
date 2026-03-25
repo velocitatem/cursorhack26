@@ -9,12 +9,12 @@ description = "AI-native full-stack template with web, backend, worker, and ML a
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "anthropic",
   "authlib>=1.6.9",
   "celery[redis]",
   "fastapi",
   "httpx",
   "itsdangerous>=2.2.0",
+  "openai",
   "opentelemetry-api",
   "opentelemetry-exporter-otlp-proto-http",
   "opentelemetry-instrumentation-fastapi",
