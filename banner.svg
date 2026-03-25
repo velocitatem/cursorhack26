@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="100%" height="100%">
+  <defs>
+    <pattern id="grass-block" width="40" height="40" patternUnits="userSpaceOnUse">
+      <rect width="40" height="40" fill="#724C2E"/>
+      <rect x="0" y="10" width="10" height="10" fill="#603F26"/>
+      <rect x="20" y="20" width="10" height="10" fill="#603F26"/>
+      <rect x="30" y="0" width="10" height="10" fill="#603F26"/>
+      <rect x="10" y="30" width="10" height="10" fill="#603F26"/>
+      <rect width="40" height="12" fill="#4FA93F"/>
+      <rect x="0" y="12" width="10" height="4" fill="#4FA93F"/>
+      <rect x="20" y="12" width="10" height="8" fill="#4FA93F"/>
+      <rect x="30" y="12" width="10" height="4" fill="#4FA93F"/>
+    </pattern>
+
+    <filter id="pixel-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="6" dy="6" stdDeviation="0" flood-color="#2D2D2D" flood-opacity="1"/>
+    </filter>
+    <filter id="light-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="3" dy="3" stdDeviation="0" flood-color="#2D2D2D" flood-opacity="1"/>
+    </filter>
+  </defs>
+
+  <rect width="1000" height="300" fill="#67B0FF"/>
+
+  <g fill="#FFD93D">
+    <rect x="850" y="40" width="60" height="60" />
+    <rect x="840" y="50" width="80" height="40" />
+    <rect x="860" y="30" width="40" height="80" />
+  </g>
+
+  <g fill="#FFFFFF" opacity="0.9">
+    <rect x="100" y="60" width="120" height="40" />
+    <rect x="120" y="40" width="80" height="20" />
+    <rect x="80" y="80" width="160" height="20" />
+    <rect x="600" y="80" width="140" height="40" />
+    <rect x="640" y="60" width="80" height="20" />
+    <rect x="580" y="100" width="180" height="20" />
+    <rect x="350" y="30" width="100" height="30" />
+    <rect x="370" y="15" width="60" height="15" />
+    <rect x="330" y="45" width="140" height="15" />
+  </g>
+
+  <path d="M0,260 L0,180 L40,180 L40,140 L80,140 L80,100 L120,100 L120,140 L160,140 L160,180 L200,180 L200,200 L260,200 L260,160 L300,160 L300,120 L340,120 L340,160 L380,160 L380,200 L440,200 L440,260 Z" fill="#589B4A" opacity="0.6"/>
+  <path d="M700,260 L700,180 L740,180 L740,140 L780,140 L780,100 L820,100 L820,140 L860,140 L860,180 L900,180 L900,260 Z" fill="#589B4A" opacity="0.6"/>
+
+  <rect x="0" y="220" width="1000" height="80" fill="url(#grass-block)" />
+
+  <g>
+    <rect x="140" y="140" width="20" height="80" fill="#603F26" />
+    <rect x="100" y="80" width="100" height="60" fill="#3D822E" />
+    <rect x="120" y="60" width="60" height="20" fill="#3D822E" />
+    <rect x="120" y="140" width="60" height="20" fill="#3D822E" />
+  </g>
+  <g transform="translate(680, 40)">
+    <rect x="120" y="140" width="20" height="40" fill="#603F26" />
+    <rect x="100" y="100" width="60" height="40" fill="#3D822E" />
+    <rect x="110" y="80" width="40" height="20" fill="#3D822E" />
+  </g>
+
+  <text x="500" y="130" font-family="'Courier New', Courier, monospace" font-size="64" font-weight="900" fill="#FFFFFF" text-anchor="middle" filter="url(#pixel-shadow)" letter-spacing="4">
+  HOLODECK
+  </text>
+
+  <text x="500" y="180" font-family="'Courier New', Courier, monospace" font-size="22" font-weight="bold" fill="#FFD93D" text-anchor="middle" filter="url(#light-shadow)" letter-spacing="5">
+    AN AI AGENTIC WORK ADVENTURE
+  </text>
+
+  <rect x="870" y="250" width="100" height="30" fill="#2D2D2D" opacity="0.8" rx="4" ry="4" />
+  <text x="920" y="270" font-family="'Courier New', Courier, monospace" font-size="14" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">
+    v1.0.0
+  </text>
+</svg>

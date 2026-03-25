@@ -1,4 +1,5 @@
-# Inbox RPG
+![](./banner.svg)
+
 Turn your daily email triage into a 3D roleplaying game you will actually want to play.
 
 ## What it does
