@@ -15,6 +15,20 @@ export type SceneChoice = {
   nextSceneId?: string
 }
 
+export type SceneBounds = {
+  minX: number
+  maxX: number
+  minZ: number
+  maxZ: number
+}
+
+export type SceneBlock = {
+  x: number
+  y: number
+  z: number
+  type: string
+}
+
 export type SceneNpc = {
   id: string
   name: string
@@ -35,6 +49,18 @@ export type ScenePayload = {
   environment: {
     theme: SceneTheme
     spawn: SceneVector
+    layout?: {
+      seed: number
+      bounds: SceneBounds
+      blocks: SceneBlock[]
+    }
+  }
+  world?: {
+    worldId: string
+    locationId: string
+    visitedLocationIds: string[]
+    plannerSource: string
+    runSeed: number
   }
   npcs: SceneNpc[]
 }
@@ -42,6 +68,7 @@ export type ScenePayload = {
 export type ChoiceSelection = {
   npcId: string
   choiceId: string
+  choiceContext?: string
 }
 
 export type ChoiceTrace = {

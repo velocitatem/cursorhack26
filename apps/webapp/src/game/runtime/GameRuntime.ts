@@ -4,7 +4,7 @@ import { createWorld, type WorldContext } from '../core/createWorld'
 import { InteractionSystem } from '../interaction/InteractionSystem'
 import { NpcManager } from '../npc/NpcManager'
 import { PlayerController } from '../player/PlayerController'
-import type { SceneNpc, ScenePayload, SceneTheme } from '../story/types'
+import type { SceneNpc, ScenePayload } from '../story/types'
 import { buildDemoMap } from '../world/buildDemoMap'
 
 export type GameRuntimeCallbacks = {
@@ -26,7 +26,7 @@ export class GameRuntime {
   private callbacks: GameRuntimeCallbacks
   private animationFrame = 0
   private mapGroup: THREE.Group | null = null
-  private mapTheme: SceneTheme | null = null
+  private mapSignature: string | null = null
   private dialogueOpen = false
   private activeNpcId: string | null = null
   private hoveredNpcId: string | null = null
@@ -50,13 +50,17 @@ export class GameRuntime {
   }
 
   setScene(scene: ScenePayload) {
-    if (this.mapTheme !== scene.environment.theme || !this.mapGroup) {
+    const mapSignature = scene.environment.layout
+      ? `${scene.environment.theme}:${scene.environment.layout.seed}:${scene.world?.locationId ?? scene.sceneId}`
+      : `${scene.environment.theme}`
+    if (this.mapSignature !== mapSignature || !this.mapGroup) {
       this.mapGroup?.removeFromParent()
 
-      const map = buildDemoMap(scene.environment.theme)
+      const map = buildDemoMap(scene.environment.theme, scene.environment.layout)
       this.mapGroup = map.group
-      this.mapTheme = scene.environment.theme
+      this.mapSignature = mapSignature
       this.player.setBounds(map.bounds)
+      this.player.setCollisionCells(map.collisionCells)
       this.world.scene.add(map.group)
     }
 

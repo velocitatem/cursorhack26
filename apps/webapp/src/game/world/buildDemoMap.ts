@@ -1,10 +1,17 @@
 import * as THREE from 'three'
 import { VoxelTerrain, type WorldBounds } from './terrain'
+import type { VoxelMaterialType } from './materials'
 import type { SceneTheme } from '../story/types'
 
 export type DemoMap = {
   group: THREE.Group
   bounds: WorldBounds
+  collisionCells: Set<string>
+}
+
+type SceneLayoutPayload = {
+  bounds: WorldBounds
+  blocks: { x: number; y: number; z: number; type: string }[]
 }
 
 const defaultBounds: WorldBounds = {
@@ -88,8 +95,63 @@ const buildCityBlock = (terrain: VoxelTerrain) => {
   addBench(terrain, 8, 0)
 }
 
-export const buildDemoMap = (theme: SceneTheme): DemoMap => {
+const allowedTypes = new Set<VoxelMaterialType>([
+  'grass',
+  'dirt',
+  'stone',
+  'tree',
+  'wood',
+  'leaf',
+  'sand',
+  'glass',
+  'plaza',
+  'mail',
+  'accent',
+])
+
+const blockAliases: Record<string, VoxelMaterialType> = {
+  cobblestone: 'stone',
+  log: 'tree',
+  planks: 'wood',
+  leaves: 'leaf',
+  glowstone: 'glass',
+  path: 'plaza',
+  road: 'plaza',
+  soil: 'dirt',
+}
+
+const toBlockType = (value: string): VoxelMaterialType => {
+  const normalized = value.trim().toLowerCase()
+  const alias = blockAliases[normalized]
+  if (alias) return alias
+  return allowedTypes.has(normalized as VoxelMaterialType) ? (normalized as VoxelMaterialType) : 'grass'
+}
+
+const buildFromLayout = (terrain: VoxelTerrain, layout: SceneLayoutPayload) => {
+  for (const block of layout.blocks) {
+    terrain.addBlock(block.x, block.y, block.z, toBlockType(block.type))
+  }
+}
+
+const passableTypes = new Set<VoxelMaterialType>(['grass', 'plaza', 'sand'])
+
+const buildCollisionCells = (terrain: VoxelTerrain) =>
+  new Set(
+    terrain.blocks
+      .filter(block => block.y >= 0 && !passableTypes.has(block.type))
+      .map(block => `${Math.round(block.x)},${Math.round(block.z)}`),
+  )
+
+export const buildDemoMap = (theme: SceneTheme, layout?: SceneLayoutPayload): DemoMap => {
   const terrain = new VoxelTerrain()
+  if (layout) {
+    buildFromLayout(terrain, layout)
+    return {
+      group: terrain.group,
+      bounds: layout.bounds,
+      collisionCells: buildCollisionCells(terrain),
+    }
+  }
 
   if (theme === 'cityBlock') {
     buildCityBlock(terrain)
@@ -100,5 +162,6 @@ export const buildDemoMap = (theme: SceneTheme): DemoMap => {
   return {
     group: terrain.group,
     bounds: defaultBounds,
+    collisionCells: buildCollisionCells(terrain),
   }
 }

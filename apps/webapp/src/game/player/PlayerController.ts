@@ -24,6 +24,7 @@ export class PlayerController {
   private readonly desiredMove = new THREE.Vector3()
   private readonly lateral = new THREE.Vector3()
   private readonly facing = new THREE.Vector3(0, 0, 1)
+  private readonly probe = new THREE.Vector2()
 
   private enabled = true
   private interactQueued = false
@@ -33,6 +34,7 @@ export class PlayerController {
     minZ: -12,
     maxZ: 12,
   }
+  private collisionCells = new Set<string>()
 
   constructor() {
     this.group.add(this.rig.group)
@@ -116,6 +118,10 @@ export class PlayerController {
     this.bounds = bounds
   }
 
+  setCollisionCells(cells: Set<string>) {
+    this.collisionCells = cells
+  }
+
   setEnabled(active: boolean) {
     this.enabled = active
     if (!active) {
@@ -173,17 +179,22 @@ export class PlayerController {
 
     if (isMoving) {
       this.desiredMove.normalize()
-      this.group.position.addScaledVector(this.desiredMove, delta * 4.75)
-      this.group.position.x = THREE.MathUtils.clamp(
-        this.group.position.x,
+      const nextX = THREE.MathUtils.clamp(
+        this.group.position.x + this.desiredMove.x * delta * 4.75,
         this.bounds.minX,
         this.bounds.maxX,
       )
-      this.group.position.z = THREE.MathUtils.clamp(
-        this.group.position.z,
+      const nextZ = THREE.MathUtils.clamp(
+        this.group.position.z + this.desiredMove.z * delta * 4.75,
         this.bounds.minZ,
         this.bounds.maxZ,
       )
+      if (!this.hasCollision(nextX, this.group.position.z)) {
+        this.group.position.x = nextX
+      }
+      if (!this.hasCollision(this.group.position.x, nextZ)) {
+        this.group.position.z = nextZ
+      }
 
       this.facing.copy(this.desiredMove)
       this.group.rotation.y = Math.atan2(this.facing.x, this.facing.z)
@@ -196,5 +207,34 @@ export class PlayerController {
     window.removeEventListener('keydown', this.handleKeyDown)
     window.removeEventListener('keyup', this.handleKeyUp)
     this.rig.dispose()
+  }
+
+  private hasCollision(x: number, z: number) {
+    if (!this.collisionCells.size) {
+      return false
+    }
+    const radius = 0.28
+    const minX = Math.floor(x - radius - 0.5)
+    const maxX = Math.ceil(x + radius + 0.5)
+    const minZ = Math.floor(z - radius - 0.5)
+    const maxZ = Math.ceil(z + radius + 0.5)
+    for (let cx = minX; cx <= maxX; cx += 1) {
+      for (let cz = minZ; cz <= maxZ; cz += 1) {
+        if (!this.collisionCells.has(`${cx},${cz}`)) {
+          continue
+        }
+        if (this.intersectsCell(x, z, radius, cx, cz)) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  private intersectsCell(px: number, pz: number, radius: number, cellX: number, cellZ: number) {
+    const nearestX = THREE.MathUtils.clamp(px, cellX - 0.5, cellX + 0.5)
+    const nearestZ = THREE.MathUtils.clamp(pz, cellZ - 0.5, cellZ + 0.5)
+    this.probe.set(px - nearestX, pz - nearestZ)
+    return this.probe.lengthSq() < radius * radius
   }
 }

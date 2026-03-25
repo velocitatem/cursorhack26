@@ -20,14 +20,17 @@ from models.story import (
     ResolveSceneRequest,
     ResolveResponse,
     Scene,
+    SceneWorldState,
     SendResponse,
     StartSceneRequest,
     StartSceneResponse,
     TraceStep,
 )
+from models.world import WorldPlanBuild
 from services.auth.user_repository import AuthRepository
 from services.gmail import GmailServiceError, list_todays_emails, send_draft_replies
 from services.scene_builder import build_scene, resolve_emails
+from services.world_planner import _simple_layout
 from services.tts import (
     SceneTTSCacheEntry,
     ensure_scene_entry,
@@ -35,6 +38,7 @@ from services.tts import (
     get_scene_entry,
     scene_tts_url,
 )
+from services.world_planner import build_world_plan
 
 router = APIRouter(prefix="/story/scene", tags=["story"])
 log = logging.getLogger(__name__)
@@ -52,6 +56,13 @@ class StorySession:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     user_id: str = "demo-user"
     resolved_drafts: list[EmailDraft] = field(default_factory=list)
+    world_id: str = ""
+    current_location_id: str = ""
+    visited_location_ids: set[str] = field(default_factory=set)
+    world_locations: dict[str, Scene] = field(default_factory=dict)
+    world_transitions: dict[str, dict[str, str]] = field(default_factory=dict)
+    planner_source: str = "fallback"
+    run_seed: int = 0
 
 
 SESSIONS: dict[str, StorySession] = {}
@@ -112,6 +123,34 @@ async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) ->
     return await asyncio.to_thread(build_scene, emails, trace)
 
 
+async def _build_world_plan_async(emails: list[EmailItem], user_id: str) -> WorldPlanBuild:
+    run_seed = int(uuid4().int % 1_000_000_000)
+    return await asyncio.to_thread(build_world_plan, emails, user_id, 4, run_seed)
+
+
+def _scene_with_world_state(session: StorySession, scene: Scene, location_id: str) -> Scene:
+    hydrated = scene.model_copy(deep=True)
+    hydrated.choice_transitions = session.world_transitions.get(location_id, {})
+    hydrated.world = SceneWorldState(
+        world_id=session.world_id or "legacy-world",
+        location_id=location_id,
+        visited_location_ids=sorted(session.visited_location_ids | {location_id}),
+        planner_source=session.planner_source,
+        run_seed=session.run_seed,
+    )
+    if hydrated.environment and hydrated.environment.layout is None:
+        loc_idx = list(session.world_locations.keys()).index(location_id) if location_id in session.world_locations else 0
+        hydrated.environment.layout = _simple_layout(seed=session.run_seed or 0, location_idx=loc_idx)
+    if hydrated.npcs:
+        primary = hydrated.npcs[0]
+        hydrated.npc_id = primary.id
+        hydrated.npc_name = primary.name
+        hydrated.dialogue = primary.opening_line
+        hydrated.choices = primary.choices
+        hydrated.related_email_ids = primary.related_email_ids
+    return hydrated
+
+
 async def _wait_for_ready_scene_tts(session_id: str, scene_id: str) -> SceneTTSCacheEntry | None:
     deadline = asyncio.get_running_loop().time() + PENDING_TTS_WAIT_SECONDS
     entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
@@ -163,6 +202,7 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
         return
     preload_results: dict[str, Scene] = {}
     for choice in scene.choices:
+        target_location_id = session.world_transitions.get(session.current_location_id, {}).get(choice.slug, "")
         trace = [*session.trace, TraceStep(
             scene_id=scene.scene_id,
             npc_id=scene.npc_id,
@@ -170,9 +210,18 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
             choice_intent=choice.intent,
             choice_context="",
             related_email_ids=scene.related_email_ids,
+            from_location_id=session.current_location_id,
+            to_location_id=target_location_id,
         )]
         try:
-            preload_scene = await _build_scene_async(session.emails, trace)
+            if target_location_id and target_location_id in session.world_locations:
+                preload_scene = _scene_with_world_state(
+                    session=session,
+                    scene=session.world_locations[target_location_id],
+                    location_id=target_location_id,
+                )
+            else:
+                preload_scene = await _build_scene_async(session.emails, trace)
             _attach_scene_tts(session_id=session_id, scene=preload_scene)
             preload_results[choice.slug] = preload_scene
         except Exception:
@@ -201,17 +250,52 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No emails found for today's inbox.",
         )
+    world_build: WorldPlanBuild | None = None
     try:
-        first_scene = await _build_scene_async(emails, [])
-    except Exception as exc:
-        log.exception("start_scene_openai_failed email_count=%s", len(emails))
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to generate first scene: {exc}",
-        ) from exc
+        world_build = await _build_world_plan_async(emails, body.user_id)
+    except Exception:
+        log.warning("world_plan_build_failed user_id=%s", body.user_id, exc_info=True)
+    first_scene: Scene
+    world_id = ""
+    current_location_id = ""
+    world_locations: dict[str, Scene] = {}
+    world_transitions: dict[str, dict[str, str]] = {}
+    planner_source = "fallback"
+    run_seed = 0
+    if world_build and world_build.plan.locations:
+        planner_source = world_build.source
+        run_seed = world_build.run_seed
+        world_id = world_build.plan.world_id
+        current_location_id = world_build.plan.entry_location_id
+        world_locations = {location.id: location.scene for location in world_build.plan.locations}
+        world_transitions = world_build.plan.transitions
+        first_scene = (world_locations.get(current_location_id) or world_build.plan.locations[0].scene).model_copy(deep=True)
+    else:
+        try:
+            first_scene = await _build_scene_async(emails, [])
+        except Exception as exc:
+            log.exception("start_scene_openai_failed email_count=%s", len(emails))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to generate first scene: {exc}",
+            ) from exc
     session_id = str(uuid4())
+    session = StorySession(
+        emails=emails,
+        current_scene=first_scene,
+        user_id=body.user_id,
+        world_id=world_id,
+        current_location_id=current_location_id,
+        visited_location_ids={current_location_id} if current_location_id else set(),
+        world_locations=world_locations,
+        world_transitions=world_transitions,
+        planner_source=planner_source,
+        run_seed=run_seed,
+    )
+    if current_location_id:
+        first_scene = _scene_with_world_state(session=session, scene=first_scene, location_id=current_location_id)
+        session.current_scene = first_scene
     _attach_scene_tts(session_id=session_id, scene=first_scene)
-    session = StorySession(emails=emails, current_scene=first_scene, user_id=body.user_id)
     SESSIONS[session_id] = session
     log.info(
         "start_scene session_id=%s email_count=%s scene_id=%s terminal=%s",
@@ -245,6 +329,7 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
         )
 
     chosen = allowed[request.choice_slug]
+    next_location_id = session.world_transitions.get(session.current_location_id, {}).get(request.choice_slug, "")
     step = TraceStep(
         scene_id=current_scene.scene_id,
         npc_id=current_scene.npc_id,
@@ -252,6 +337,8 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
         choice_intent=chosen.intent,
         choice_context=request.choice_context.strip(),
         related_email_ids=current_scene.related_email_ids,
+        from_location_id=session.current_location_id,
+        to_location_id=next_location_id,
     )
     next_trace = [*session.trace, step]
 
@@ -259,7 +346,14 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
     if next_scene is None:
         log.info("advance_scene_cache_miss session_id=%s", session_id)
         try:
-            next_scene = await _build_scene_async(session.emails, next_trace)
+            if next_location_id and next_location_id in session.world_locations:
+                next_scene = _scene_with_world_state(
+                    session=session,
+                    scene=session.world_locations[next_location_id],
+                    location_id=next_location_id,
+                )
+            else:
+                next_scene = await _build_scene_async(session.emails, next_trace)
         except Exception as exc:
             log.exception("advance_scene_openai_failed session_id=%s", session_id)
             raise HTTPException(
@@ -275,6 +369,9 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
         session.trace = next_trace
         session.current_scene = next_scene
         session.preloaded_by_choice = {}
+        if next_location_id:
+            session.current_location_id = next_location_id
+            session.visited_location_ids.add(next_location_id)
 
     _start_scene_tts_generation(session_id=session_id, scene=next_scene)
     asyncio.create_task(_preload_next(session_id, session, next_scene))
