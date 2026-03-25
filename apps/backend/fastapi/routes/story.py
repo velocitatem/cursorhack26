@@ -45,6 +45,7 @@ PENDING_TTS_POLL_SECONDS = 0.05
 @dataclass
 class StorySession:
     emails: list[EmailItem]
+    max_scenes: int = 4
     trace: list[TraceStep] = field(default_factory=list)
     current_scene: Scene | None = None
     preloaded_by_choice: dict[str, Scene] = field(default_factory=dict)
@@ -55,6 +56,8 @@ class StorySession:
 
 
 SESSIONS: dict[str, StorySession] = {}
+MIN_SCENE_BUDGET = 4
+MAX_SCENE_BUDGET = 10
 
 
 def _mock_emails() -> list[EmailItem]:
@@ -108,8 +111,17 @@ async def _load_emails(body: StartSceneRequest, repo: AuthRepository | None) -> 
     return emails
 
 
-async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) -> Scene:
-    return await asyncio.to_thread(build_scene, emails, trace)
+def _scene_budget_for_emails(emails: list[EmailItem]) -> int:
+    unique_email_count = len({email.id for email in emails})
+    return max(MIN_SCENE_BUDGET, min(MAX_SCENE_BUDGET, unique_email_count + 1))
+
+
+async def _build_scene_async(
+    emails: list[EmailItem],
+    trace: list[TraceStep],
+    max_scenes: int,
+) -> Scene:
+    return await asyncio.to_thread(build_scene, emails, trace, max_scenes)
 
 
 async def _wait_for_ready_scene_tts(session_id: str, scene_id: str) -> SceneTTSCacheEntry | None:
@@ -172,7 +184,7 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
             related_email_ids=scene.related_email_ids,
         )]
         try:
-            preload_scene = await _build_scene_async(session.emails, trace)
+            preload_scene = await _build_scene_async(session.emails, trace, session.max_scenes)
             _attach_scene_tts(session_id=session_id, scene=preload_scene)
             preload_results[choice.slug] = preload_scene
         except Exception:
@@ -201,8 +213,9 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No emails found for today's inbox.",
         )
+    max_scenes = _scene_budget_for_emails(emails)
     try:
-        first_scene = await _build_scene_async(emails, [])
+        first_scene = await _build_scene_async(emails, [], max_scenes)
     except Exception as exc:
         log.exception("start_scene_openai_failed email_count=%s", len(emails))
         raise HTTPException(
@@ -211,7 +224,12 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
         ) from exc
     session_id = str(uuid4())
     _attach_scene_tts(session_id=session_id, scene=first_scene)
-    session = StorySession(emails=emails, current_scene=first_scene, user_id=body.user_id)
+    session = StorySession(
+        emails=emails,
+        max_scenes=max_scenes,
+        current_scene=first_scene,
+        user_id=body.user_id,
+    )
     SESSIONS[session_id] = session
     log.info(
         "start_scene session_id=%s email_count=%s scene_id=%s terminal=%s",
@@ -259,7 +277,7 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
     if next_scene is None:
         log.info("advance_scene_cache_miss session_id=%s", session_id)
         try:
-            next_scene = await _build_scene_async(session.emails, next_trace)
+            next_scene = await _build_scene_async(session.emails, next_trace, session.max_scenes)
         except Exception as exc:
             log.exception("advance_scene_openai_failed session_id=%s", session_id)
             raise HTTPException(

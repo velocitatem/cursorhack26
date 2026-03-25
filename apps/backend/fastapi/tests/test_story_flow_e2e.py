@@ -12,8 +12,8 @@ repo_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(base_dir))
 sys.path.insert(0, str(repo_root))
 
-from models.story import EmailDraft, Scene  # noqa: E402
-from routes.story import StorySession, router as story_router  # noqa: E402
+from models.story import EmailDraft, EmailItem, Scene  # noqa: E402
+from routes.story import StorySession, _scene_budget_for_emails, router as story_router  # noqa: E402
 from services.tts import SceneTTSCacheEntry  # noqa: E402
 
 
@@ -56,9 +56,20 @@ def test_story_preview_returns_override_inbox():
     assert preview_json["emails"][0]["subject"] == inbox[0]["subject"]
 
 
+def test_scene_budget_scales_with_inbox_size():
+    def email(index: int) -> EmailItem:
+        return EmailItem(id=f"email-{index}", sender="", subject="")
+
+    assert _scene_budget_for_emails([]) == 4
+    assert _scene_budget_for_emails([email(1)]) == 4
+    assert _scene_budget_for_emails([email(1), email(2), email(3), email(4)]) == 5
+    assert _scene_budget_for_emails([email(index) for index in range(20)]) == 10
+
+
 def test_story_scene_flow_end_to_end(monkeypatch):
     app = FastAPI()
     app.include_router(story_router)
+    max_scene_calls: list[int] = []
 
     inbox = [
         {
@@ -77,6 +88,7 @@ def test_story_scene_flow_end_to_end(monkeypatch):
 
     def fake_build_scene(emails, trace, max_scenes=3):
         assert emails
+        max_scene_calls.append(max_scenes)
         if not trace:
             return Scene.model_validate(
                 {
@@ -163,6 +175,7 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     assert len(start_json["scene"]["choices"]) == 3
     assert start_json["scene"]["tts"]
     assert start_json["scene"]["voice_id"] == "voice-1"
+    assert max_scene_calls[0] == 4
 
     session_id = start_json["session_id"]
     advance = client.post(

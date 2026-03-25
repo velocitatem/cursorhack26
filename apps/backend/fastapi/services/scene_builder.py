@@ -96,6 +96,9 @@ Rules:
   Do not use archaic or theatrical wording like "hail, traveler, quest, sundown's last light".
 - Always preserve concrete context from the email (request, urgency, timeline, pricing, etc.).
 - related_email_ids must list every email id this scene covers.
+- Until constraints.should_end_now is true, do not emit a terminal scene.
+- Prefer scenes that advance emails listed in constraints.remaining_email_ids before revisiting
+  already-covered threads.
 - Each choice must include an `intent` field: a short snake_case keyword that captures how
   the player would reply to the real email (e.g. "agree_immediately", "polite_decline",
   "ask_for_more_time", "deflect_to_colleague", "enthusiastic_yes", "rude_dismissal").
@@ -147,7 +150,15 @@ def _openai_post(api_key: str, body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_scene_prompt(emails: list[EmailItem], trace: list[TraceStep], max_scenes: int) -> str:
-    should_end = len(trace) >= max_scenes - 1
+    email_ids = [email.id for email in emails]
+    covered_email_ids = {
+        email_id
+        for step in trace
+        for email_id in step.related_email_ids
+    }
+    should_end = len(trace) >= max_scenes - 1 or (
+        bool(email_ids) and all(email_id in covered_email_ids for email_id in email_ids)
+    )
     return json.dumps(
         {
             "emails": [e.model_dump() for e in emails],
@@ -157,6 +168,9 @@ def _build_scene_prompt(emails: list[EmailItem], trace: list[TraceStep], max_sce
                 "current_depth": len(trace),
                 "should_end_now": should_end,
                 "choice_count": 3 if not should_end else 0,
+                "remaining_email_ids": [
+                    email_id for email_id in email_ids if email_id not in covered_email_ids
+                ],
             },
         },
         ensure_ascii=True,

@@ -440,7 +440,7 @@ function GameShell({
 
   const isBusy = isStarting || isAdvancing || isResolving || runStage === 'sending'
   const showWorld = !isPreviewVisible
-  const showHud = runStage === 'playing'
+  const showHud = runStage === 'playing' && !done && !isResolving
   const showFinale = isResolving || runStage === 'review' || runStage === 'sending' || runStage === 'sent'
   const previewStage: 'previewing' | 'ready' | 'generating' =
     runStage === 'generating' ? 'generating' : runStage === 'ready' ? 'ready' : 'previewing'
@@ -450,6 +450,13 @@ function GameShell({
   useEffect(() => {
     stopDialogueAudio()
   }, [scene.sceneId, stopDialogueAudio])
+
+  useEffect(() => {
+    if (done) {
+      stopDialogueAudio()
+      closeDialogue()
+    }
+  }, [closeDialogue, done, stopDialogueAudio])
 
   useEffect(() => {
     if (!activeNpc) {
@@ -464,13 +471,13 @@ function GameShell({
 
   const handleNpcInteract = useCallback(
     (npc: SceneNpc) => {
-      if (!npc.choices.length) {
+      if (done || !npc.choices.length) {
         return
       }
       void playNpc(npc)
       openDialogue(npc.id)
     },
-    [openDialogue, playNpc],
+    [done, openDialogue, playNpc],
   )
 
   const handleCloseDialogue = useCallback(() => {
@@ -532,7 +539,7 @@ function GameShell({
       {showWorld ? (
         <WorldCanvas
           scene={scene}
-          dialogueOpen={isOpen || showFinale}
+          dialogueOpen={done || isOpen || showFinale}
           activeNpcId={activeNpcId}
           onNpcInteract={handleNpcInteract}
         />
@@ -600,7 +607,7 @@ function GameShell({
         />
       ) : null}
 
-      {showWorld && runStage === 'playing' ? (
+      {showWorld && runStage === 'playing' && !done ? (
         <DialogueOverlay
           npc={activeNpc}
           visibleLine={visibleLine}
