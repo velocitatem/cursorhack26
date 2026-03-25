@@ -15,16 +15,17 @@ export const mailboxDisplayName = (raw: string): string => {
   const trimmed = raw.trim()
   if (!trimmed) return 'Unknown'
 
-  const onlyAddr = trimmed.match(/^\s*<([^<>]+)>\s*$/)
-  if (onlyAddr) {
-    return formatLocalPart(onlyAddr[1].trim()) || 'Unknown'
-  }
-
-  const named = trimmed.match(/^(.+?)\s*<([^<>]+)>\s*$/)
-  if (named) {
-    const name = stripQuotes(named[1])
-    if (name) return name
-    return formatLocalPart(named[2].trim()) || 'Unknown'
+  const lt = trimmed.indexOf('<')
+  if (lt !== -1) {
+    const before = stripQuotes(trimmed.slice(0, lt).trim())
+    let after = trimmed.slice(lt + 1).trim()
+    const gt = after.lastIndexOf('>')
+    if (gt !== -1) {
+      after = after.slice(0, gt).trim()
+    }
+    if (before) return before
+    if (after) return formatLocalPart(after) || after
+    return 'Unknown'
   }
 
   if (/^[^\s<>]+@[^\s<>]+$/.test(trimmed)) {
