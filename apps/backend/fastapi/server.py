@@ -71,7 +71,7 @@ def create_app(
 app = create_app()
 
 if __name__ == "__main__":
-    PORT = int(os.getenv("BACKEND_PORT", 5000))
+    PORT = int(os.getenv("BACKEND_PORT", os.getenv("PORT", 5000)))
     uvicorn.run(
         "server:app",
         host="0.0.0.0",

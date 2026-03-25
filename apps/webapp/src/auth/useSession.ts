@@ -68,7 +68,9 @@ export function useSession() {
   }, [refreshSession])
 
   const beginGoogleLogin = useCallback(() => {
-    window.location.href = `${API_BASE_URL}/auth/google/login`
+    const loginUrl = new URL(`${API_BASE_URL}/auth/google/login`)
+    loginUrl.searchParams.set('return_to', window.location.href)
+    window.location.href = loginUrl.toString()
   }, [])
 
   const logout = useCallback(async () => {

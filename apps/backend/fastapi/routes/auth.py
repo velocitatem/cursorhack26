@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from alveslib import get_logger
 from authlib.integrations.base_client.errors import OAuthError
@@ -24,15 +24,71 @@ from services.auth.user_repository import AuthRepository
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = get_logger("backend-fastapi.auth")
+POST_AUTH_REDIRECT_SESSION_KEY = "post_auth_redirect"
 
 
-def _redirect_with_error(settings: Settings, error_code: str) -> RedirectResponse:
+def _normalize_absolute_url(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return None
+
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return None
+
+    path = parts.path or "/"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def _url_origin(value: str | None) -> str | None:
+    normalized = _normalize_absolute_url(value)
+    if normalized is None:
+        return None
+
+    parts = urlsplit(normalized)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _post_auth_redirect_fallback(settings: Settings) -> str:
+    return f"{settings.webapp_origin}/"
+
+
+def _resolve_post_auth_redirect(request: Request, settings: Settings) -> str:
+    requested_redirect = _normalize_absolute_url(request.query_params.get("return_to"))
+    if requested_redirect is None:
+        return _post_auth_redirect_fallback(settings)
+
+    trusted_origins = {settings.webapp_origin}
+    for header_name in ("origin", "referer"):
+        header_origin = _url_origin(request.headers.get(header_name))
+        if header_origin is not None:
+            trusted_origins.add(header_origin)
+
+    if _url_origin(requested_redirect) not in trusted_origins:
+        return _post_auth_redirect_fallback(settings)
+
+    return requested_redirect
+
+
+def _pop_post_auth_redirect(request: Request, settings: Settings) -> str:
+    redirect_url = _normalize_absolute_url(request.session.pop(POST_AUTH_REDIRECT_SESSION_KEY, None))
+    if redirect_url is None:
+        return _post_auth_redirect_fallback(settings)
+    return redirect_url
+
+
+def _redirect_with_error(request: Request, settings: Settings, error_code: str) -> RedirectResponse:
     query = urlencode({"auth_error": error_code})
-    return RedirectResponse(url=f"{settings.webapp_origin}/?{query}", status_code=status.HTTP_302_FOUND)
+    redirect_url = _pop_post_auth_redirect(request, settings)
+    separator = "&" if urlsplit(redirect_url).query else "?"
+    return RedirectResponse(url=f"{redirect_url}{separator}{query}", status_code=status.HTTP_302_FOUND)
 
 
-def _redirect_to_app(settings: Settings) -> RedirectResponse:
-    return RedirectResponse(url=f"{settings.webapp_origin}/", status_code=status.HTTP_302_FOUND)
+def _redirect_to_app(request: Request, settings: Settings) -> RedirectResponse:
+    return RedirectResponse(url=_pop_post_auth_redirect(request, settings), status_code=status.HTTP_302_FOUND)
 
 
 def _serialize_session(user: SessionUser | None) -> SessionResponse:
@@ -70,6 +126,7 @@ async def google_login(
     google_client: GoogleOAuthClient = Depends(get_google_client),
 ):
     try:
+        request.session[POST_AUTH_REDIRECT_SESSION_KEY] = _resolve_post_auth_redirect(request, settings)
         redirect_uri = f"{settings.backend_public_url}/auth/google/callback"
         return await google_client.authorize_redirect(request, redirect_uri)
     except RuntimeError as exc:
@@ -86,20 +143,20 @@ async def google_callback(
 ):
     if request.query_params.get("error"):
         log.warning("google_oauth_error error=%s", request.query_params.get("error"))
-        return _redirect_with_error(settings, "google_oauth_failed")
+        return _redirect_with_error(request, settings, "google_oauth_failed")
 
     try:
         token = await google_client.authorize_access_token(request)
         userinfo = await google_client.fetch_userinfo(token)
     except (OAuthError, RuntimeError):
         log.warning("google_oauth_callback_failed", exc_info=True)
-        return _redirect_with_error(settings, "google_oauth_failed")
+        return _redirect_with_error(request, settings, "google_oauth_failed")
 
     google_sub = userinfo.get("sub")
     email = userinfo.get("email")
     if not google_sub or not email:
         log.warning("google_oauth_missing_identity_fields")
-        return _redirect_with_error(settings, "google_oauth_failed")
+        return _redirect_with_error(request, settings, "google_oauth_failed")
 
     user = repository.upsert_user(
         google_sub=google_sub,
@@ -120,7 +177,7 @@ async def google_callback(
     )
 
     app_session_token = session_service.create_session(user.id)
-    response = _redirect_to_app(settings)
+    response = _redirect_to_app(request, settings)
     session_service.set_session_cookie(response, app_session_token)
     return response
 

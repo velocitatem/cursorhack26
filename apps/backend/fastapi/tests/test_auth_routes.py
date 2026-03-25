@@ -211,6 +211,24 @@ def test_successful_callback_creates_user_token_session_and_cookie():
     assert len(repository.sessions_by_hash) == 1
 
 
+def test_callback_redirects_to_login_return_url_when_origin_matches():
+    client, _, repository, _ = make_client()
+
+    with client:
+        login_response = client.get(
+            "/auth/google/login",
+            params={"return_to": "https://demo.ultiplate.app/play?scene=intro"},
+            headers={"referer": "https://demo.ultiplate.app/"},
+            follow_redirects=False,
+        )
+        callback_response = client.get("/auth/google/callback", follow_redirects=False)
+
+    assert login_response.status_code == 307
+    assert callback_response.status_code == 302
+    assert callback_response.headers["location"] == "https://demo.ultiplate.app/play?scene=intro"
+    assert len(repository.sessions_by_hash) == 1
+
+
 def test_second_callback_preserves_existing_refresh_token():
     client, _, repository, google_client = make_client()
     with client:
@@ -247,6 +265,24 @@ def test_invalid_state_redirects_with_auth_error():
 
     assert response.status_code == 302
     assert response.headers["location"] == "http://localhost:5173/?auth_error=google_oauth_failed"
+
+
+def test_invalid_state_redirects_back_to_login_return_url_with_auth_error():
+    client, _, _, google_client = make_client()
+    google_client.raise_error = OAuthError(error="invalid_state")
+
+    with client:
+        login_response = client.get(
+            "/auth/google/login",
+            params={"return_to": "https://demo.ultiplate.app/play"},
+            headers={"referer": "https://demo.ultiplate.app/"},
+            follow_redirects=False,
+        )
+        response = client.get("/auth/google/callback", follow_redirects=False)
+
+    assert login_response.status_code == 307
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://demo.ultiplate.app/play?auth_error=google_oauth_failed"
 
 
 def test_expired_session_returns_unauthenticated_and_clears_cookie():
