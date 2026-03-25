@@ -11,12 +11,13 @@ import type {
 } from './schemas'
 import type { ChoiceSelection } from './types'
 
-type RunStage = 'previewing' | 'generating' | 'playing' | 'review' | 'sending' | 'sent'
+type RunStage = 'previewing' | 'ready' | 'generating' | 'playing' | 'review' | 'sending' | 'sent'
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Something went wrong while talking to the story service.'
 
-const isPreviewVisible = (stage: RunStage) => stage === 'previewing' || stage === 'generating'
+const isPreviewVisible = (stage: RunStage) =>
+  stage === 'previewing' || stage === 'ready' || stage === 'generating'
 
 export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   const [provider] = useState(() => createStoryProvider())
@@ -45,7 +46,7 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     [],
   )
 
-  const start = useCallback(async () => {
+  const initPreview = useCallback(async () => {
     setIsStarting(true)
     setIsAdvancing(false)
     setIsResolving(false)
@@ -62,22 +63,14 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
 
     try {
       const preview = await provider.preview({ user_id: userId ?? 'demo-user' })
-      setPreviewEmails(preview.emails)
+      const limitedEmails = preview.emails.slice(0, 5)
+      setPreviewEmails(limitedEmails)
       setPreviewSource(preview.source)
+      setRunStage('ready')
 
-      if (!preview.emails.length) {
+      if (!limitedEmails.length) {
         setError("No emails found for today's inbox.")
-        return
       }
-
-      setRunStage('generating')
-      const response = await provider.start({
-        user_id: userId ?? 'demo-user',
-        inbox_override: preview.emails,
-      })
-      setSessionId(response.session_id)
-      applyScene(response)
-      setRunStage('playing')
     } catch (error) {
       setScene(
         createPlaceholderScene(
@@ -86,15 +79,42 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
         ),
       )
       setError(getErrorMessage(error))
-      setRunStage('previewing')
+      setRunStage('ready')
+    } finally {
+      setIsStarting(false)
+    }
+  }, [provider, userId])
+
+  useEffect(() => {
+    void initPreview()
+  }, [initPreview])
+
+  const beginRun = useCallback(async (emails: EmailItem[]) => {
+    if (!emails.length) {
+      setError('Choose at least one email to start the run.')
+      return
+    }
+
+    setIsStarting(true)
+    setError(null)
+    setRunStage('generating')
+    setPreviewEmails(emails)
+
+    try {
+      const response = await provider.start({
+        user_id: userId ?? 'demo-user',
+        inbox_override: emails,
+      })
+      setSessionId(response.session_id)
+      applyScene(response)
+      setRunStage('playing')
+    } catch (error) {
+      setError(getErrorMessage(error))
+      setRunStage('ready')
     } finally {
       setIsStarting(false)
     }
   }, [applyScene, provider, userId])
-
-  useEffect(() => {
-    void start()
-  }, [start])
 
   const chooseOption = useCallback(async (selection: ChoiceSelection) => {
     if (!sessionId) {
@@ -194,9 +214,53 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     }
   }, [provider, sessionId])
 
+  const sendSelectedDrafts = useCallback(async (emailIds: string[]): Promise<SendResponse | null> => {
+    if (!sessionId || !emailIds.length) {
+      return null
+    }
+
+    setRunStage('sending')
+    setError(null)
+
+    const settled = await Promise.allSettled(
+      emailIds.map(async emailId => {
+        try {
+          return await provider.sendDraft(sessionId, emailId)
+        } catch (error) {
+          return {
+            email_id: emailId,
+            thread_id: null,
+            gmail_message_id: null,
+            status: 'failed' as const,
+            error: getErrorMessage(error),
+          }
+        }
+      }),
+    )
+
+    const results = settled.map((entry, index) =>
+      entry.status === 'fulfilled'
+        ? entry.value
+        : {
+          email_id: emailIds[index],
+          thread_id: null,
+          gmail_message_id: null,
+          status: 'failed' as const,
+          error: getErrorMessage(entry.reason),
+        })
+
+    const response = {
+      session_id: sessionId,
+      results,
+    }
+    setSendResults(results)
+    setRunStage('sent')
+    return response
+  }, [provider, sessionId])
+
   const restart = useCallback(() => {
-    void start()
-  }, [start])
+    void initPreview()
+  }, [initPreview])
 
   return {
     mode: provider.mode,
@@ -218,6 +282,8 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     resolveDrafts,
     sendAllDrafts,
     sendDraft,
+    sendSelectedDrafts,
+    beginRun,
     restart,
   }
 }

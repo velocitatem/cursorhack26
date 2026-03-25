@@ -59,29 +59,56 @@ function PreludeOverlay({
   stage,
   error,
   onRetry,
+  onBeginRun,
 }: {
   userLabel: string
   emails: EmailItem[]
   source: InboxPreviewResponse['source']
   mode: string
-  stage: 'previewing' | 'generating'
+  stage: 'previewing' | 'ready' | 'generating'
   error: string | null
   onRetry: () => void
+  onBeginRun: (emails: EmailItem[]) => void
 }) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(emails.map(email => email.id)))
+
+  useEffect(() => {
+    if (stage === 'ready') {
+      setSelectedIds(new Set(emails.map(email => email.id)))
+    }
+  }, [emails, stage])
+
+  const toggleEmail = (emailId: string) => {
+    setSelectedIds(previous => {
+      const next = new Set(previous)
+      if (next.has(emailId)) {
+        next.delete(emailId)
+      } else {
+        next.add(emailId)
+      }
+      return next
+    })
+  }
+
+  const selectedEmails = emails.filter(email => selectedIds.has(email.id))
   const statusTitle = error
     ? 'The route generator stalled.'
     : stage === 'generating'
       ? 'Forging the city from today’s inbox.'
-      : 'Scanning today’s threads.'
+      : stage === 'ready'
+        ? 'Choose the threads for this run.'
+        : 'Scanning today’s threads.'
 
   const statusCopy = error
     ? 'Retry the run and the game will rebuild from the same inbox preview flow.'
     : stage === 'generating'
       ? 'Emails are being turned into characters, dialogue, and branching reply paths.'
-      : 'Pulling in today’s most important threads before the world opens.'
+      : stage === 'ready'
+        ? 'Keep only the emails you want to turn into scenes, then launch the run.'
+        : 'Pulling in today’s most important threads before the world opens.'
 
   const metrics = [
-    { label: 'Threads', value: emails.length.toString().padStart(2, '0') },
+    { label: 'Selected', value: selectedEmails.length.toString().padStart(2, '0') },
     { label: 'Source', value: previewSourceLabels[source] },
     { label: 'Mode', value: mode === 'stub' ? 'Demo' : 'Live' },
   ]
@@ -91,21 +118,63 @@ function PreludeOverlay({
     <section className="prelude-overlay" data-stage={stage}>
       <div className="prelude-chrome" />
       <div className="prelude-grid">
-        <div className="prelude-hero">
-          <p className="screen-kicker">Inbox Quest</p>
-          <h1 className="prelude-title">Your next replies are about to become a city.</h1>
-          <p className="prelude-copy">
-            {userLabel} is entering a short run through today&apos;s inbox. Every thread below becomes a scene once the
-            route is ready.
-          </p>
+        <div className="prelude-rail">
+          <div className="prelude-hero">
+            <p className="screen-kicker">Inbox Quest</p>
+            <h1 className="prelude-title">Your next replies are about to become a city.</h1>
+            <p className="prelude-copy">
+              {userLabel} is entering a short run through today&apos;s inbox. Every thread below becomes a scene once the
+              route is ready.
+            </p>
 
-          <div className="prelude-metrics">
-            {metrics.map(metric => (
-              <article className="metric-card" key={metric.label}>
-                <p>{metric.label}</p>
-                <strong>{metric.value}</strong>
-              </article>
-            ))}
+            <div className="prelude-metrics">
+              {metrics.map(metric => (
+                <article className="metric-card" key={metric.label}>
+                  <p>{metric.label}</p>
+                  <strong>{metric.value}</strong>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="prelude-status-card">
+            <div className="status-ring" aria-hidden="true" />
+            <div>
+              <p className="eyebrow">Story build</p>
+              <h2>{statusTitle}</h2>
+              <p className="status-copy">{statusCopy}</p>
+            </div>
+
+            <div className="status-rail" aria-hidden="true">
+              <span className="status-rail-fill" />
+            </div>
+
+            <div className="status-list">
+              <p>{stage === 'generating' ? 'Composing NPC dialogue and route choices.' : 'Checking inbox availability.'}</p>
+              <p>{stage === 'generating' ? 'Preloading the first playable scene.' : 'Preparing the game shell.'}</p>
+            </div>
+
+            {error ? (
+              <div className="status-actions">
+                <p className="story-error">{error}</p>
+                <button className="hud-button hud-button-primary" onClick={onRetry} type="button">
+                  Retry run
+                </button>
+              </div>
+            ) : stage === 'ready' ? (
+              <div className="status-actions">
+                <button
+                  className="hud-button hud-button-primary"
+                  disabled={!selectedEmails.length}
+                  onClick={() => onBeginRun(selectedEmails)}
+                  type="button"
+                >
+                  Start run with {selectedEmails.length}
+                </button>
+              </div>
+            ) : (
+              <p className="story-note">The world opens automatically as soon as the first story scene is ready.</p>
+            )}
           </div>
         </div>
 
@@ -125,6 +194,16 @@ function PreludeOverlay({
                   <div className="prelude-email-meta">
                     <span>{email.sender}</span>
                     <span>Today</span>
+                    {stage === 'ready' ? (
+                      <label className="email-select-pill">
+                        <input
+                          checked={selectedIds.has(email.id)}
+                          onChange={() => toggleEmail(email.id)}
+                          type="checkbox"
+                        />
+                        <span>{selectedIds.has(email.id) ? 'Keep' : 'Skip'}</span>
+                      </label>
+                    ) : null}
                   </div>
                   <h3>{email.subject}</h3>
                   <p>{email.snippet || email.body || 'This thread will become part of the route.'}</p>
@@ -139,35 +218,6 @@ function PreludeOverlay({
               ))}
           </div>
         </div>
-
-        <div className="prelude-status-card">
-          <div className="status-ring" aria-hidden="true" />
-          <div>
-            <p className="eyebrow">Story build</p>
-            <h2>{statusTitle}</h2>
-            <p className="status-copy">{statusCopy}</p>
-          </div>
-
-          <div className="status-rail" aria-hidden="true">
-            <span className="status-rail-fill" />
-          </div>
-
-          <div className="status-list">
-            <p>{stage === 'generating' ? 'Composing NPC dialogue and route choices.' : 'Checking inbox availability.'}</p>
-            <p>{stage === 'generating' ? 'Preloading the first playable scene.' : 'Preparing the game shell.'}</p>
-          </div>
-
-          {error ? (
-            <div className="status-actions">
-              <p className="story-error">{error}</p>
-              <button className="hud-button hud-button-primary" onClick={onRetry} type="button">
-                Retry run
-              </button>
-            </div>
-          ) : (
-            <p className="story-note">The world opens automatically as soon as the first story scene is ready.</p>
-          )}
-        </div>
       </div>
     </section>
   )
@@ -180,7 +230,7 @@ function FinaleOverlay({
   runStage,
   isResolving,
   error,
-  onSendAll,
+  onSendSelected,
   onRetryDraft,
   onRestart,
 }: {
@@ -190,10 +240,28 @@ function FinaleOverlay({
   runStage: 'review' | 'sending' | 'sent'
   isResolving: boolean
   error: string | null
-  onSendAll: () => void
+  onSendSelected: (emailIds: string[]) => void
   onRetryDraft: (emailId: string) => void
   onRestart: () => void
 }) {
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(() => new Set())
+
+  useEffect(() => {
+    setSelectedDraftIds(new Set(drafts.map(draft => draft.email_id)))
+  }, [drafts])
+
+  const toggleDraft = (emailId: string) => {
+    setSelectedDraftIds(previous => {
+      const next = new Set(previous)
+      if (next.has(emailId)) {
+        next.delete(emailId)
+      } else {
+        next.add(emailId)
+      }
+      return next
+    })
+  }
+
   const routeSummary = trace.map(step => ({
     id: `${step.scene_id}:${step.choice_slug}`,
     title: toReadableLabel(step.choice_slug),
@@ -201,8 +269,16 @@ function FinaleOverlay({
   }))
 
   const resultsByEmailId = new Map(sendResults.map(result => [result.email_id, result]))
-  const sentCount = sendResults.filter(result => result.status === 'sent').length
-  const failedCount = sendResults.filter(result => result.status === 'failed').length
+  const recapRows = drafts.map(draft => {
+    const result = resultsByEmailId.get(draft.email_id)
+    const status: 'sent' | 'failed' | 'skipped' = !selectedDraftIds.has(draft.email_id)
+      ? 'skipped'
+      : result?.status ?? 'failed'
+    return { draft, result, status }
+  })
+  const sentCount = recapRows.filter(row => row.status === 'sent').length
+  const failedCount = recapRows.filter(row => row.status === 'failed').length
+  const skippedCount = recapRows.filter(row => row.status === 'skipped').length
 
   if (isResolving) {
     return (
@@ -247,7 +323,9 @@ function FinaleOverlay({
               <p className="screen-kicker">Run Complete</p>
               <h2>Agent recap</h2>
               <p className="prelude-copy">
-                {sentCount} sent{failedCount ? `, ${failedCount} still need attention.` : '. Every routed reply made it out.'}
+                {sentCount} sent
+                {failedCount ? `, ${failedCount} still need attention` : ''}
+                {skippedCount ? `, ${skippedCount} held back.` : '. Every selected reply made it out.'}
               </p>
             </div>
             <button className="hud-button" onClick={onRestart} type="button">
@@ -258,13 +336,12 @@ function FinaleOverlay({
           <div className="finale-summary-strip">
             <span>{drafts.length} drafts reviewed</span>
             <span>{sentCount} sent</span>
+            <span>{skippedCount} skipped</span>
             <span>{failedCount} failed</span>
           </div>
 
           <div className="finale-list">
-            {drafts.map(draft => {
-              const result = resultsByEmailId.get(draft.email_id)
-              const status = result?.status ?? 'failed'
+            {recapRows.map(({ draft, result, status }) => {
               return (
                 <article className="finale-email-card" key={draft.email_id}>
                   <div className="finale-email-header">
@@ -278,8 +355,14 @@ function FinaleOverlay({
                   <p>{draft.body}</p>
 
                   <div className="result-meta">
-                    <span>{result?.gmail_message_id ? `Message ${result.gmail_message_id}` : 'Awaiting provider id'}</span>
-                    <span>{result?.thread_id ? `Thread ${result.thread_id}` : 'Thread id pending'}</span>
+                    {status === 'skipped' ? (
+                      <span>Held back during final review</span>
+                    ) : (
+                      <>
+                        <span>{result?.gmail_message_id ? `Message ${result.gmail_message_id}` : 'Awaiting provider id'}</span>
+                        <span>{result?.thread_id ? `Thread ${result.thread_id}` : 'Thread id pending'}</span>
+                      </>
+                    )}
                   </div>
 
                   {status === 'failed' ? (
@@ -309,14 +392,19 @@ function FinaleOverlay({
           <div>
             <p className="screen-kicker">Final Review</p>
             <h2>The route is locked.</h2>
-            <p className="prelude-copy">Review the bundle, then send the full set through the agent in one action.</p>
+            <p className="prelude-copy">Review the bundle, choose what to actually send, then dispatch the checked drafts.</p>
           </div>
           <div className="finale-actions">
             <button className="hud-button" onClick={onRestart} type="button">
               Restart run
             </button>
-            <button className="hud-button hud-button-primary" onClick={onSendAll} type="button">
-              Send all with agent
+            <button
+              className="hud-button hud-button-primary"
+              disabled={!selectedDraftIds.size}
+              onClick={() => onSendSelected(Array.from(selectedDraftIds))}
+              type="button"
+            >
+              Send selected with agent
             </button>
           </div>
         </div>
@@ -328,13 +416,23 @@ function FinaleOverlay({
                 <p className="eyebrow">Draft bundle</p>
                 <h3>Replies ready to go</h3>
               </div>
-              <span className="source-chip">{drafts.length} threads</span>
+              <span className="source-chip">{selectedDraftIds.size} selected</span>
             </div>
 
             <div className="finale-list">
               {drafts.map(draft => (
                 <article className="finale-email-card" key={draft.email_id}>
-                  <p className="draft-to">To: {draft.to}</p>
+                  <div className="finale-email-header">
+                    <p className="draft-to">To: {draft.to}</p>
+                    <label className="email-select-pill">
+                      <input
+                        checked={selectedDraftIds.has(draft.email_id)}
+                        onChange={() => toggleDraft(draft.email_id)}
+                        type="checkbox"
+                      />
+                      <span>{selectedDraftIds.has(draft.email_id) ? 'Send' : 'Skip'}</span>
+                    </label>
+                  </div>
                   <h3>{draft.subject}</h3>
                   <p>{draft.body}</p>
                 </article>
@@ -394,8 +492,9 @@ function GameShell({
     isResolving,
     isPreviewVisible,
     chooseOption,
-    sendAllDrafts,
+    sendSelectedDrafts,
     sendDraft,
+    beginRun,
     restart,
   } = useSceneLoader({ userId })
   const {
@@ -422,7 +521,12 @@ function GameShell({
   const showFinale = isResolving || runStage === 'review' || runStage === 'sending' || runStage === 'sent'
   const showMobileControls = showWorld && showHud && !isOpen && !isBusy && isCoarsePointer
   const canInteract = Boolean(interactionTarget) && !isBusy && !isOpen
-  const previewStage = runStage === 'generating' ? 'generating' : 'previewing'
+  const previewStage =
+    runStage === 'generating'
+      ? 'generating'
+      : runStage === 'ready'
+        ? 'ready'
+        : 'previewing'
   const finaleStage: 'review' | 'sending' | 'sent' =
     runStage === 'sending' || runStage === 'sent' ? runStage : 'review'
 
@@ -473,9 +577,9 @@ function GameShell({
     restart()
   }, [closeDialogue, restart, stopDialogueAudio])
 
-  const handleSendAll = useCallback(() => {
-    void sendAllDrafts()
-  }, [sendAllDrafts])
+  const handleSendSelected = useCallback((emailIds: string[]) => {
+    void sendSelectedDrafts(emailIds)
+  }, [sendSelectedDrafts])
 
   const handleRetryDraft = useCallback(
     (emailId: string) => {
@@ -600,6 +704,7 @@ function GameShell({
           stage={previewStage}
           error={error}
           onRetry={handleRestart}
+          onBeginRun={beginRun}
         />
       ) : null}
 
@@ -611,7 +716,7 @@ function GameShell({
           runStage={finaleStage}
           isResolving={isResolving}
           error={error}
-          onSendAll={handleSendAll}
+          onSendSelected={handleSendSelected}
           onRetryDraft={handleRetryDraft}
           onRestart={handleRestart}
         />

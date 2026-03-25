@@ -13,7 +13,7 @@ sys.path.insert(0, str(base_dir))
 sys.path.insert(0, str(repo_root))
 
 from models.story import EmailDraft, Scene  # noqa: E402
-from models.world import WorldLocation, WorldPlan  # noqa: E402
+from models.world import WorldLocation, WorldPlan, WorldPlanBuild  # noqa: E402
 from routes.story import StorySession, router as story_router  # noqa: E402
 from services.tts import SceneTTSCacheEntry  # noqa: E402
 
@@ -142,7 +142,7 @@ def test_story_scene_flow_end_to_end(monkeypatch):
             ),
         ]
 
-    def fake_world_plan(emails, user_id, max_locations=4):
+    def fake_world_plan(emails, user_id, max_locations=5, run_seed=None):
         raise RuntimeError("planner unavailable")
 
     monkeypatch.setattr("routes.story.build_scene", fake_build_scene)
@@ -248,7 +248,14 @@ def test_story_start_uses_world_plan(monkeypatch):
         transitions={"loc-1": {"go-next": "loc-2"}, "loc-2": {}},
     )
 
-    monkeypatch.setattr("routes.story.build_world_plan", lambda emails, user_id, max_locations=4: world_plan)
+    monkeypatch.setattr(
+        "routes.story.build_world_plan",
+        lambda emails, user_id, max_locations=5, run_seed=None: WorldPlanBuild(
+            plan=world_plan,
+            source="test",
+            run_seed=run_seed or 0,
+        ),
+    )
     monkeypatch.setattr(
         "routes.story.ensure_scene_entry",
         lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
