@@ -149,18 +149,27 @@ WORLD_PLAN_SCHEMA: dict[str, Any] = {
 }
 
 WORLD_SYSTEM_PROMPT = """You plan a compact RPG world for inbox triage.
-Return a persistent world graph where each location has one scene.
+Return a single persistent world hub where every selected email becomes one NPC.
 Requirements:
-- Create exactly one location and one primary NPC for each input email, up to 5 total emails.
-- Keep location count between 1 and 5, matching the number of provided emails whenever emails exist.
+- Create exactly 1 location when emails exist.
+- Put exactly one primary NPC in that hub for each input email, up to 5 total emails.
 - Every scene must include environment with spawn and optional layout blocks.
 - Every scene must include npcs with explicit positions and dialogue.
-- Also keep top-level scene npc_id, npc_name, dialogue, choices aligned to the primary npc.
-- choice_transitions maps each choice slug to a valid location id.
+- Also keep top-level scene npc_id, npc_name, dialogue, choices aligned to one of the unresolved NPCs.
 - related_email_ids and npc email_id must point to known emails.
-- Do not merge multiple emails into the same location or NPC.
-- Include one terminal location with empty choices and is_terminal=true.
-- Ensure transitions follow the email sequence and can reach a terminal node in <= 5 hops.
+- Do not merge multiple emails into the same NPC.
+- choice_transitions may be empty because the run stays inside one shared hub.
+- Set is_terminal=false when there are email NPCs to resolve.
+- Each NPC's opening_line must sound like the person is physically in the world talking to the
+  player in first person. They should introduce themselves and explain what they need.
+- For application or recruiting emails, the NPC should introduce themselves as the candidate and
+  briefly mention 2-4 concrete resume facts if present, such as school, grade/GPA, strongest
+  project, internship impact, or technical stack.
+- Example target style: "Hi, I'm Daniel. I'm applying for the front-end developer role. I studied
+  at X, graduated with Y, and my standout project was Z."
+- Do not write opening_line or dialogue like an inbox summary or raw email header.
+- Never say "this email", "this thread", "subject line", or "inbox".
+- Preserve the real facts from the source email, but translate them into spoken dialogue.
 """
 
 DEFAULT_BOUNDS = SceneWorldBounds(minX=-14, maxX=14, minZ=-14, maxZ=14)
@@ -235,49 +244,42 @@ def _simple_layout(seed: int, location_idx: int) -> SceneLayout:
     return SceneLayout(seed=seed + location_idx, bounds=DEFAULT_BOUNDS, blocks=blocks)
 
 
+def _sender_display_name(sender: str) -> str:
+    local_part = (sender or "").split("@", 1)[0]
+    tokens = [part for part in local_part.replace(".", " ").replace("_", " ").replace("-", " ").split() if part]
+    if not tokens:
+        return "there"
+    return " ".join(token.capitalize() for token in tokens)
+
+
+def _spoken_request_line(email: EmailItem) -> str:
+    speaker_name = _sender_display_name(email.sender)
+    subject = (email.subject or "something important").strip().rstrip(".")
+    context = (email.snippet or email.body or "I need your response today.").strip()
+    context = " ".join(context.split())
+    if context and not context.endswith((".", "!", "?")):
+        context = f"{context}."
+    return f"Hi, I'm {speaker_name}, and I'm reaching out about {subject}. {context}"
+
+
 def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -> WorldPlan:
     world_id = f"world-{uuid4().hex[:8]}"
-    selected_emails = emails[-5:] if emails else []
+    selected_emails = emails[:5] if emails else []
     email_seed = sum(ord(char) for email in selected_emails for char in email.id) or 1337
     seed = run_seed if run_seed is not None else email_seed
     base_choices = [
         SceneChoice(slug="reply_now", label="Reply now", intent="agree_immediately"),
-        SceneChoice(slug="ask_context", label="Ask for context", intent="ask_for_clarification"),
+        SceneChoice(slug="send_polished_reply", label="Send polished reply", intent="confident_response"),
         SceneChoice(slug="defer", label="Defer politely", intent="ask_for_more_time"),
     ]
-    locations: list[WorldLocation] = []
-    transitions: dict[str, dict[str, str]] = {}
-    last_index = len(selected_emails) - 1
-    for idx, email in enumerate(selected_emails):
-        loc_id = f"loc-{idx + 1}"
-        is_terminal = idx == last_index
-        primary_npc = SceneNpc(
-            id=email.id,
-            name=email.sender.split("@")[0].replace(".", " ").title(),
-            email_id=email.id,
-            position=SceneVector(x=(idx * 4) - 4, y=0, z=2 if idx % 2 == 0 else -2),
-            opening_line=f"{email.subject}. {email.snippet or 'This thread needs your response today.'}",
-            choices=[] if is_terminal else base_choices,
-            related_email_ids=[email.id],
-        )
-        scene = Scene(
-            scene_id=f"scene-{loc_id}",
-            npc_id=primary_npc.id,
-            npc_name=primary_npc.name,
-            dialogue=primary_npc.opening_line,
-            choices=primary_npc.choices,
-            is_terminal=is_terminal,
-            related_email_ids=[email.id],
-            environment=SceneEnvironment(
-                theme="inboxPlaza" if idx % 2 == 0 else "cityBlock",
-                spawn=SceneVector(x=0, y=0, z=8),
-                layout=_simple_layout(seed=seed, location_idx=idx),
-            ),
-            npcs=[primary_npc],
-            choice_transitions={},
-        )
-        locations.append(WorldLocation(id=loc_id, scene=scene, bounds=DEFAULT_BOUNDS))
-    if not locations:
+    positions = [
+        SceneVector(x=-7, y=0, z=1),
+        SceneVector(x=-3, y=0, z=-4),
+        SceneVector(x=1, y=0, z=3),
+        SceneVector(x=5, y=0, z=-3),
+        SceneVector(x=8, y=0, z=2),
+    ]
+    if not selected_emails:
         terminal = Scene(
             scene_id="scene-terminal",
             npc_id="narrator",
@@ -290,21 +292,46 @@ def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -
             npcs=[],
             choice_transitions={},
         )
-        return WorldPlan(world_id=world_id, entry_location_id="loc-1", locations=[WorldLocation(id="loc-1", scene=terminal, bounds=DEFAULT_BOUNDS)], transitions={})
-    for idx, location in enumerate(locations):
-        if location.scene.is_terminal:
-            transitions[location.id] = {}
-            location.scene.choice_transitions = {}
-            continue
-        next_id = locations[min(idx + 1, len(locations) - 1)].id
-        location_transitions = {choice.slug: next_id for choice in location.scene.choices}
-        transitions[location.id] = location_transitions
-        location.scene.choice_transitions = location_transitions
+        return WorldPlan(
+            world_id=world_id,
+            entry_location_id="hub",
+            locations=[WorldLocation(id="hub", scene=terminal, bounds=DEFAULT_BOUNDS)],
+            transitions={"hub": {}},
+        )
+
+    npcs: list[SceneNpc] = []
+    for idx, email in enumerate(selected_emails):
+        npcs.append(SceneNpc(
+            id=email.id,
+            name=email.sender.split("@")[0].replace(".", " ").title(),
+            email_id=email.id,
+            position=positions[idx % len(positions)],
+            opening_line=_spoken_request_line(email),
+            choices=base_choices,
+            related_email_ids=[email.id],
+        ))
+    primary_npc = npcs[0]
+    scene = Scene(
+        scene_id="scene-hub",
+        npc_id=primary_npc.id,
+        npc_name=primary_npc.name,
+        dialogue=primary_npc.opening_line,
+        choices=primary_npc.choices,
+        is_terminal=False,
+        related_email_ids=[email.id for email in selected_emails],
+        environment=SceneEnvironment(
+            theme="inboxPlaza",
+            spawn=SceneVector(x=0, y=0, z=8),
+            layout=_simple_layout(seed=seed, location_idx=0),
+        ),
+        npcs=npcs,
+        choice_transitions={},
+    )
     return WorldPlan(
         world_id=world_id,
-        entry_location_id=locations[0].id,
-        locations=locations,
-        transitions=transitions,
+        entry_location_id="hub",
+        locations=[WorldLocation(id="hub", scene=scene, bounds=DEFAULT_BOUNDS)],
+        transitions={"hub": {}},
     )
 
 

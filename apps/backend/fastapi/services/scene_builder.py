@@ -89,22 +89,36 @@ Rules:
 - Each NPC *is* one of the email senders. npc_id must equal the email id it covers.
   npc_name should be a fun Minecraft/work re-skin of the sender (e.g. "Manager Steve",
   "Client Builder", "Ops Villager").
+- The NPC must speak as a person in-world, not as an email summary. Write the dialogue as if the
+  sender is standing in front of the player introducing themselves and explaining what they need.
+  Good pattern: "Hi, I'm Paul. I'm applying for the front-end engineering role and my strongest
+  work is in React..." or "I'm Maya from Ops, and I need your approval on this payment today."
+- For application or recruiting emails, have the NPC introduce themselves as the candidate and
+  briefly mention 2-4 concrete resume facts if present, such as school, GPA/grade, strongest
+  project, internship impact, or technical stack.
+- Example target style: "Hi, I'm Daniel. I'm applying for the front-end developer role. I studied
+  at X, graduated with Y, and my standout project was Z."
 - Dialogue must stay clear and readable:
-  1) First sentence must be plain context in modern language (no roleplay terms), including
-     what the sender wants and by when if timing exists.
-  2) Second sentence can add light in-world flavor.
+  1) First sentence must be a first-person introduction that identifies who they are and why they
+     are talking to the player.
+  2) Second sentence must explain the concrete ask, urgency, or constraint in plain modern language.
   Do not use archaic or theatrical wording like "hail, traveler, quest, sundown's last light".
+- Never describe the message as "this email", "this thread", "my subject line", "my inbox", or
+  anything else that exposes the raw email format. Convert the email contents into spoken intent.
 - Always preserve concrete context from the email (request, urgency, timeline, pricing, etc.).
 - related_email_ids must list every email id this scene covers.
 - Each choice must include an `intent` field: a short snake_case keyword that captures how
   the player would reply to the real email (e.g. "agree_immediately", "polite_decline",
   "ask_for_more_time", "deflect_to_colleague", "enthusiastic_yes", "rude_dismissal").
   The label should be direct and action-first (e.g. "Send update now", "Ask for more time").
+- Do not generate a generic "Ask for context" option. Assume the player already sees the full
+  context from the inbox and NPC dialogue. Choices should be actual reply strategies, not
+  requests to restate information.
 - Avoid repetitive wording across scenes; vary phrasing and sentence openings.
 - One choice per scene should always be a wildcard / comedic option.
 - If constraints.should_end_now is true, produce a terminal scene wrapping up the story.
   Terminal scenes have empty choices and is_terminal=true.
-- Keep dialogue to exactly 2 sentences. Keep choice labels under 6 words.
+- Keep dialogue to 2-3 short sentences. Keep choice labels under 6 words.
 """
 
 RESOLVE_SYSTEM_PROMPT = """You are an email assistant. Given a list of original emails and the

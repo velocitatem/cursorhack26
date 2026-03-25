@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { AuthGate } from './auth/AuthGate'
 import { useSession } from './auth/useSession'
@@ -530,6 +530,18 @@ function GameShell({
   const showHud = runStage === 'playing'
   const showFinale = isResolving || runStage === 'review' || runStage === 'sending' || runStage === 'sent'
   const showMobileControls = showWorld && showHud && !isOpen && !isBusy && isCoarsePointer
+  const remainingNpcCount = useMemo(() => {
+    if (!previewEmails.length) {
+      return scene.npcs.length
+    }
+
+    const selectedEmailIds = new Set(previewEmails.map(email => email.id))
+    const completedEmailIds = new Set(
+      trace.flatMap(step => step.related_email_ids).filter(emailId => selectedEmailIds.has(emailId)),
+    )
+
+    return Math.max(0, previewEmails.length - completedEmailIds.size)
+  }, [previewEmails, scene.npcs.length, trace])
   const canInteract = Boolean(interactionTarget) && !isBusy && !isOpen
   const previewStage =
     runStage === 'generating'
@@ -634,6 +646,13 @@ function GameShell({
         </span>
       </div>
 
+      {showHud ? (
+        <div className="run-progress-pill">
+          <span className="run-progress-label">Emails left</span>
+          <strong>{remainingNpcCount}</strong>
+        </div>
+      ) : null}
+
       {showWorld ? (
         <WorldCanvas
           scene={scene}
@@ -662,6 +681,7 @@ function GameShell({
                 <div className="story-meta">
                   <span>Mode: {mode}</span>
                   <span>Choices locked: {trace.length}</span>
+                  <span>Emails left: {remainingNpcCount}</span>
                   <span>
                     {scene.world
                       ? `Location: ${scene.world.locationId} (${scene.world.visitedLocationIds.length} visited)`

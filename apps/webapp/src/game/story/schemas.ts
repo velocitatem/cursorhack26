@@ -108,6 +108,7 @@ export const inboxPreviewResponseSchema = z.object({
 })
 
 export const advanceSceneRequestSchema = z.object({
+  npc_id: z.string().default(''),
   choice_slug: z.string().min(1),
   choice_context: z.string().optional(),
 })

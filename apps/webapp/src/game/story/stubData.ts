@@ -1,4 +1,3 @@
-import { mockScenes } from './mockScene'
 import {
   advanceSceneRequestSchema,
   advanceSceneResponseSchema,
@@ -33,9 +32,9 @@ type StoryProvider = {
 }
 
 type StubSession = {
-  sceneIndex: number
   emails: EmailItem[]
   trace: TraceStep[]
+  resolvedEmailIds: string[]
 }
 
 const stubDelay = (ms = 140) =>
@@ -43,89 +42,40 @@ const stubDelay = (ms = 140) =>
     window.setTimeout(resolve, ms)
   })
 
-const toIntent = (value: string) => value.replace(/-/g, '_')
-const toTransitions = (choices: { id: string }[], nextLocationId: string) =>
-  Object.fromEntries(choices.map(choice => [choice.id, nextLocationId]))
-
-const pickNpc = (sceneId: keyof typeof mockScenes) => mockScenes[sceneId].npcs[0]
-
-const inboxNpc = pickNpc('inbox-arrival')
-const followUpNpc = pickNpc('follow-up-row')
-const victoryNpc = pickNpc('victory-lap')
+const stubChoices = [
+  { slug: 'reply_now', label: 'Reply now', intent: 'agree_immediately' },
+  { slug: 'send_polished_reply', label: 'Send polished reply', intent: 'confident_response' },
+  { slug: 'defer', label: 'Defer politely', intent: 'ask_for_more_time' },
+]
+const stubPositions = [
+  { x: -7, y: 0, z: 1 },
+  { x: -3, y: 0, z: -4 },
+  { x: 1, y: 0, z: 3 },
+  { x: 5, y: 0, z: -3 },
+  { x: 8, y: 0, z: 2 },
+]
 
 const defaultInbox: EmailItem[] = [
   {
-    id: inboxNpc.emailId,
+    id: 'email-1',
     sender: 'rhea@ultiplate.dev',
     subject: 'Standup status before ten',
     snippet: 'Need a crisp progress update before the team sync.',
     body: 'Can you send a tight update before standup with shipped work, blockers, and the next step?',
   },
   {
-    id: followUpNpc.emailId,
+    id: 'email-2',
     sender: 'juno@ultiplate.dev',
     subject: 'Founder follow-up',
     snippet: 'Need a confident reply with a sharp next step.',
     body: 'Reply with the decision, why it is the right call, and what happens next without overpromising.',
   },
-]
-
-const storyScenes: StoryScene[] = [
   {
-    scene_id: mockScenes['inbox-arrival'].sceneId,
-    npc_id: inboxNpc.id,
-    npc_name: inboxNpc.name,
-    dialogue: inboxNpc.openingLine,
-    tts: '',
-    choices: inboxNpc.choices.map(choice => ({
-      slug: choice.id,
-      label: choice.label,
-      intent: toIntent(choice.id),
-    })),
-    is_terminal: false,
-    related_email_ids: [inboxNpc.emailId],
-    environment: {
-      theme: 'inboxPlaza',
-      spawn: { x: 0, y: 0, z: 8 },
-    },
-    npcs: [],
-    choice_transitions: toTransitions(inboxNpc.choices, 'follow-up-row'),
-  },
-  {
-    scene_id: mockScenes['follow-up-row'].sceneId,
-    npc_id: followUpNpc.id,
-    npc_name: followUpNpc.name,
-    dialogue: followUpNpc.openingLine,
-    tts: '',
-    choices: followUpNpc.choices.map(choice => ({
-      slug: choice.id,
-      label: choice.label,
-      intent: toIntent(choice.id),
-    })),
-    is_terminal: false,
-    related_email_ids: [followUpNpc.emailId],
-    environment: {
-      theme: 'cityBlock',
-      spawn: { x: 0, y: 0, z: 9 },
-    },
-    npcs: [],
-    choice_transitions: toTransitions(followUpNpc.choices, 'victory-lap'),
-  },
-  {
-    scene_id: mockScenes['victory-lap'].sceneId,
-    npc_id: victoryNpc.id,
-    npc_name: victoryNpc.name,
-    dialogue: victoryNpc.openingLine,
-    tts: '',
-    choices: [],
-    is_terminal: true,
-    related_email_ids: defaultInbox.map(email => email.id),
-    environment: {
-      theme: 'inboxPlaza',
-      spawn: { x: 0, y: 0, z: 8 },
-    },
-    npcs: [],
-    choice_transitions: {},
+    id: 'email-3',
+    sender: 'ops@ultiplate.dev',
+    subject: 'Approve vendor payment',
+    snippet: 'Need a same-day answer on whether to release the payment.',
+    body: 'Reply with a clear yes or no, mention the amount, and ask for any missing invoice details if needed.',
   },
 ]
 
@@ -146,14 +96,36 @@ const buildDrafts = (emails: EmailItem[], trace: TraceStep[]): EmailDraft[] =>
     }
   })
 
-const getSceneForIndex = (index: number) => storyScenes[Math.min(index, storyScenes.length - 1)]
+const buildStubScene = (emails: EmailItem[], resolvedEmailIds: string[]): StoryScene => {
+  const unresolvedEmails = emails.filter(email => !resolvedEmailIds.includes(email.id))
+  const npcs = unresolvedEmails.map((email, index) => ({
+    id: email.id,
+    name: email.sender.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, char => char.toUpperCase()),
+    email_id: email.id,
+    position: stubPositions[index % stubPositions.length],
+    opening_line: `${email.subject}. ${email.snippet || email.body || 'This thread needs your answer today.'}`,
+    tts: '',
+    choices: stubChoices.map(choice => ({ ...choice })),
+    related_email_ids: [email.id],
+  }))
+  const primaryNpc = npcs[0]
 
-const assertChoice = (scene: StoryScene, choiceSlug: string) => {
-  const choice = scene.choices.find(entry => entry.slug === choiceSlug)
-  if (!choice) {
-    throw new Error(`Stub story rejected unknown choice "${choiceSlug}".`)
+  return {
+    scene_id: `stub-hub-${resolvedEmailIds.length}`,
+    npc_id: primaryNpc?.id ?? 'narrator',
+    npc_name: primaryNpc?.name ?? 'Inbox Narrator',
+    dialogue: primaryNpc?.opening_line ?? 'Every inbox contact has been handled. Move to final review.',
+    tts: '',
+    choices: primaryNpc?.choices ?? [],
+    is_terminal: unresolvedEmails.length === 0,
+    related_email_ids: unresolvedEmails.map(email => email.id),
+    environment: {
+      theme: 'inboxPlaza',
+      spawn: { x: 0, y: 0, z: 8 },
+    },
+    npcs,
+    choice_transitions: {},
   }
-  return choice
 }
 
 export const createStubStoryProvider = (): StoryProvider => ({
@@ -173,10 +145,10 @@ export const createStubStoryProvider = (): StoryProvider => ({
     const payload = startSceneRequestSchema.parse(request)
     const sessionId = `stub-session-${crypto.randomUUID()}`
     const emails = payload.inbox_override ?? defaultInbox
-    sessions.set(sessionId, { sceneIndex: 0, emails, trace: [] })
+    sessions.set(sessionId, { emails, trace: [], resolvedEmailIds: [] })
     return startSceneResponseSchema.parse({
       session_id: sessionId,
-      scene: getSceneForIndex(0),
+      scene: buildStubScene(emails, []),
       trace: [],
       done: false,
     })
@@ -190,7 +162,7 @@ export const createStubStoryProvider = (): StoryProvider => ({
       throw new Error(`Stub story session "${sessionId}" was not found.`)
     }
 
-    const currentScene = getSceneForIndex(session.sceneIndex)
+    const currentScene = buildStubScene(session.emails, session.resolvedEmailIds)
     if (currentScene.is_terminal) {
       return advanceSceneResponseSchema.parse({
         scene: currentScene,
@@ -199,27 +171,31 @@ export const createStubStoryProvider = (): StoryProvider => ({
       })
     }
 
-    const choice = assertChoice(currentScene, payload.choice_slug)
+    const activeNpc = currentScene.npcs.find(npc => npc.id === payload.npc_id) ?? currentScene.npcs[0]
+    const choice = activeNpc?.choices.find(entry => entry.slug === payload.choice_slug)
+    if (!activeNpc || !choice) {
+      throw new Error(`Stub story rejected unknown choice "${payload.choice_slug}" for npc "${payload.npc_id}".`)
+    }
     const nextTrace = [
       ...session.trace,
       {
         scene_id: currentScene.scene_id,
-        npc_id: currentScene.npc_id,
+        npc_id: activeNpc.id,
         choice_slug: choice.slug,
         choice_intent: choice.intent,
         choice_context: '',
-        related_email_ids: currentScene.related_email_ids,
-        from_location_id: '',
-        to_location_id: '',
+        related_email_ids: activeNpc.related_email_ids,
+        from_location_id: 'hub',
+        to_location_id: 'hub',
       },
     ]
-    const nextSceneIndex = Math.min(session.sceneIndex + 1, storyScenes.length - 1)
-    const nextScene = getSceneForIndex(nextSceneIndex)
+    const nextResolvedEmailIds = [...session.resolvedEmailIds, activeNpc.email_id]
+    const nextScene = buildStubScene(session.emails, nextResolvedEmailIds)
 
     sessions.set(sessionId, {
       ...session,
-      sceneIndex: nextSceneIndex,
       trace: nextTrace,
+      resolvedEmailIds: nextResolvedEmailIds,
     })
 
     return advanceSceneResponseSchema.parse({

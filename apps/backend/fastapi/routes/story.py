@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from email.utils import parseaddr
 from io import BytesIO
 import logging
+import re
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -47,6 +49,14 @@ router = APIRouter(prefix="/story/scene", tags=["story"])
 log = logging.getLogger(__name__)
 PENDING_TTS_WAIT_SECONDS = 0.5
 PENDING_TTS_POLL_SECONDS = 0.05
+SHARED_WORLD_LOCATION_ID = "hub"
+HUB_NPC_NAME_ROSTER = [
+    "Alberto",
+    "Daniel Kong",
+    "Paul Ruiz",
+    "Sebas",
+    "Daniel Rosel",
+]
 
 
 @dataclass
@@ -69,6 +79,338 @@ class StorySession:
 
 
 SESSIONS: dict[str, StorySession] = {}
+
+
+def _default_reply_choices():
+    return [
+        {"slug": "reply_now", "label": "Reply now", "intent": "agree_immediately"},
+        {"slug": "send_polished_reply", "label": "Send polished reply", "intent": "confident_response"},
+        {"slug": "defer", "label": "Defer politely", "intent": "ask_for_more_time"},
+    ]
+
+
+def _sanitize_choices(choices: list[SceneChoice]) -> list[SceneChoice]:
+    sanitized: list[SceneChoice] = []
+    for choice in choices:
+        choice_key = f"{choice.slug} {choice.label} {choice.intent}".lower()
+        if "ask_context" in choice_key or "ask for context" in choice_key:
+            continue
+        sanitized.append(choice)
+
+    if len(sanitized) >= 2:
+        return sanitized[:3]
+
+    fallback = [SceneChoice.model_validate(choice) for choice in _default_reply_choices()]
+    existing_slugs = {choice.slug for choice in sanitized}
+    for choice in fallback:
+        if choice.slug not in existing_slugs:
+            sanitized.append(choice)
+        if len(sanitized) >= 3:
+            break
+    return sanitized
+
+
+def _shared_world_positions():
+    return [
+        {"x": -7, "y": 0, "z": 1},
+        {"x": -3, "y": 0, "z": -4},
+        {"x": 1, "y": 0, "z": 3},
+        {"x": 5, "y": 0, "z": -3},
+        {"x": 8, "y": 0, "z": 2},
+    ]
+
+
+def _hub_npc_name_for_index(fallback_index: int, email: EmailItem) -> str:
+    if 0 <= fallback_index < len(HUB_NPC_NAME_ROSTER):
+        return HUB_NPC_NAME_ROSTER[fallback_index]
+    return _display_name_for_email(email)
+
+
+def _sender_display_name(sender: str) -> str:
+    display_name, address = parseaddr(sender or "")
+    source = display_name or address.split("@", 1)[0]
+    tokens = [part for part in re.split(r"[\s._-]+", source) if part]
+    if not tokens:
+        return "there"
+    return " ".join(token.capitalize() for token in tokens[:3])
+
+
+def _extract_person_name(email: EmailItem) -> str | None:
+    combined = " ".join(part for part in [email.subject or "", email.snippet or "", email.body or ""] if part)
+    patterns = [
+        r"\b(?:hi[, ]+)?i\s+am\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+        r"\b(?:hi[, ]+)?i'm\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+        r"\bmy name is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+        r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+is applying for the\b",
+        r"\bapplication from\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, combined, flags=re.IGNORECASE)
+        if match:
+            return " ".join(part.capitalize() for part in match.group(1).split())
+    return None
+
+
+def _display_name_for_email(email: EmailItem) -> str:
+    return _extract_person_name(email) or _sender_display_name(email.sender)
+
+
+def _sender_first_name(sender: str, email: EmailItem | None = None, display_name: str | None = None) -> str:
+    if display_name:
+        return display_name.split()[0]
+    if email is not None:
+        return _display_name_for_email(email).split()[0]
+    return _sender_display_name(sender).split()[0]
+
+
+def _sentences(text: str) -> list[str]:
+    normalized = " ".join((text or "").replace("\n", " ").split())
+    if not normalized:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", normalized)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _extract_role(text: str) -> str | None:
+    patterns = [
+        r"applying for the ([^.!,\n]+?(?:role|position|internship|job))",
+        r"application for the ([^.!,\n]+?(?:role|position|internship|job))",
+        r"candidate for the ([^.!,\n]+?(?:role|position|internship|job))",
+    ]
+    haystack = text or ""
+    for pattern in patterns:
+        match = re.search(pattern, haystack, flags=re.IGNORECASE)
+        if match:
+            return " ".join(match.group(1).split())
+    return None
+
+
+def _extract_fact_value(text: str, patterns: list[str]) -> str | None:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return " ".join(match.group(1).strip().strip(" ,:;").split())
+    return None
+
+
+def _rewrite_to_first_person(text: str, sender: str) -> str:
+    rewritten = " ".join((text or "").split())
+    if not rewritten:
+        return ""
+    display_name = _sender_display_name(sender)
+    first_name = _sender_first_name(sender)
+    replacements = [
+        (rf"\b{re.escape(display_name)}\b", "I"),
+        (rf"\b{re.escape(first_name)}\b", "I"),
+        (r"\b(he|she|they)\b", "I"),
+        (r"\b(his|her|their)\b", "my"),
+        (r"\b(is applying)\b", "am applying"),
+        (r"\b(has studied)\b", "have studied"),
+        (r"\b(has built)\b", "have built"),
+        (r"\b(has worked)\b", "have worked"),
+        (r"\b(highlights)\b", "highlight"),
+        (r"\b(looks forward to)\b", "look forward to"),
+    ]
+    for pattern, replacement in replacements:
+        rewritten = re.sub(pattern, replacement, rewritten, flags=re.IGNORECASE)
+    return rewritten
+
+
+def _build_npc_opening_line(email: EmailItem, display_name: str | None = None) -> str:
+    subject = email.subject or ""
+    body = email.body or ""
+    snippet = email.snippet or ""
+    combined = " ".join(part for part in [subject, snippet, body] if part)
+    first_name = _sender_first_name(email.sender, email, display_name)
+
+    role = _extract_role(combined)
+    if role:
+        study = _extract_fact_value(
+            combined,
+            [
+                r"(?:studied at|study at|graduated from|attended)\s+([^.!,\n]+)",
+                r"([A-Z][A-Za-z& .'-]+(?:University|College|School|Institute))",
+            ],
+        )
+        grade = _extract_fact_value(
+            combined,
+            [
+                r"(?:gpa|grade)\s*(?:of|:)?\s*([0-9]+(?:\.[0-9]+)?(?:/[0-9]+(?:\.[0-9]+)?)?)",
+                r"graduated with (?:a\s+)?([0-9]+(?:\.[0-9]+)?(?:/[0-9]+(?:\.[0-9]+)?)?(?:\s*gpa)?)",
+            ],
+        )
+        project = _extract_fact_value(
+            combined,
+            [
+                r"(?:most important project|best project|main project|capstone project|standout project)\s*(?:was|is|:)?\s*([^.!\n]+)",
+                r"(?:built|developed|created)\s+([^.!\n]+)",
+            ],
+        )
+        technical_stack = _extract_fact_value(
+            combined,
+            [
+                r"(?:skills in|strongest skills are|technical stack includes|stack includes)\s+([^.!\n]+)",
+                r"(React[^.!\n]+)",
+            ],
+        )
+        internship_win = _extract_fact_value(
+            combined,
+            [
+                r"(during (?:my )?internship[^.!\n]+)",
+                r"(improved [^.!\n]+ by [0-9]+%)",
+                r"(increased [^.!\n]+ by [0-9]+%)",
+            ],
+        )
+        details: list[str] = []
+        if study:
+            details.append(f"I studied at {study}")
+        if grade:
+            details.append(f"I graduated with {grade}")
+        if technical_stack:
+            details.append(f"my core stack is {technical_stack}")
+        if project:
+            details.append(f"my standout project was {project}")
+        if internship_win:
+            details.append(_rewrite_to_first_person(internship_win, email.sender))
+        details = details[:4]
+        second_sentence = ", ".join(details)
+        if not second_sentence:
+            fact_sentence = next(
+                (
+                    _rewrite_to_first_person(sentence, email.sender)
+                    for sentence in _sentences(combined)
+                    if any(keyword in sentence.lower() for keyword in ["project", "stud", "graduat", "gpa", "grade", "react", "vue", "javascript", "internship", "skill", "stack"])
+                ),
+                "",
+            )
+            second_sentence = fact_sentence or "I’d love to walk you through my background, strongest work, and why I’m a strong fit."
+        if not second_sentence.endswith("."):
+            second_sentence = f"{second_sentence}."
+        return f"Hi, I'm {first_name}. I'm applying for the {role}. {second_sentence}"
+
+    first_fact = next((_rewrite_to_first_person(sentence, email.sender) for sentence in _sentences(combined) if sentence), "")
+    if not first_fact:
+        first_fact = "I wanted to talk through what I need from you today."
+    if not first_fact.endswith("."):
+        first_fact = f"{first_fact}."
+    return f"Hi, I'm {first_name}. {first_fact}"
+
+
+def _build_hub_npc(
+    email: EmailItem,
+    fallback_index: int,
+    planner_npc: SceneNpc | None = None,
+    planner_scene: Scene | None = None,
+) -> SceneNpc:
+    choices = planner_npc.choices if planner_npc and planner_npc.choices else planner_scene.choices if planner_scene and planner_scene.choices else []
+    if not choices:
+        choices = [SceneChoice.model_validate(choice) for choice in _default_reply_choices()]
+    choices = _sanitize_choices([choice.model_copy(deep=True) for choice in choices])
+    position = _shared_world_positions()[fallback_index % len(_shared_world_positions())]
+    display_name = _hub_npc_name_for_index(fallback_index, email)
+    return SceneNpc(
+        id=email.id,
+        name=display_name,
+        email_id=email.id,
+        position=SceneVector(**position),
+        opening_line=_build_npc_opening_line(email, display_name),
+        choices=choices,
+        related_email_ids=[email.id],
+    )
+
+
+def _build_shared_world_scene(plan_build: WorldPlanBuild, emails: list[EmailItem]) -> Scene:
+    locations = plan_build.plan.locations
+    if not locations:
+        return Scene(
+            scene_id="scene-hub-terminal",
+            npc_id="narrator",
+            npc_name="Inbox Narrator",
+            dialogue="No emails found. The city is calm today.",
+            choices=[],
+            is_terminal=True,
+            related_email_ids=[],
+        )
+    base_scene = locations[0].scene.model_copy(deep=True)
+    planner_npcs_by_email_id: dict[str, tuple[SceneNpc, Scene]] = {}
+    for location in locations:
+        if location.scene.npcs:
+            for npc in location.scene.npcs:
+                planner_npcs_by_email_id.setdefault(npc.email_id, (npc, location.scene))
+        else:
+            source_email_id = location.scene.related_email_ids[0] if location.scene.related_email_ids else location.scene.npc_id
+            planner_npcs_by_email_id.setdefault(
+                source_email_id,
+                (
+                    SceneNpc(
+                        id=location.scene.npc_id,
+                        name=location.scene.npc_name,
+                        email_id=source_email_id,
+                        position=location.scene.environment.spawn.model_copy(deep=True),
+                        opening_line=location.scene.dialogue,
+                        choices=location.scene.choices,
+                        related_email_ids=[source_email_id],
+                    ),
+                    location.scene,
+                ),
+            )
+
+    npcs = []
+    for idx, email in enumerate(emails[:5]):
+        planner_npc, planner_scene = planner_npcs_by_email_id.get(email.id, (None, None))
+        npcs.append(_build_hub_npc(email, idx, planner_npc, planner_scene))
+    if not npcs:
+        return base_scene
+    primary = npcs[0]
+    all_email_ids = [npc.email_id for npc in npcs]
+    return base_scene.model_copy(
+        update={
+            "scene_id": f"{base_scene.scene_id}-hub",
+            "npc_id": primary.id,
+            "npc_name": primary.name,
+            "dialogue": primary.opening_line,
+            "choices": primary.choices,
+            "is_terminal": False,
+            "related_email_ids": all_email_ids,
+            "npcs": npcs,
+            "choice_transitions": {},
+        },
+        deep=True,
+    )
+
+
+def _build_shared_world_next_scene(current_scene: Scene, remaining_npcs: list[SceneNpc], session: StorySession) -> Scene:
+    if not remaining_npcs:
+        return current_scene.model_copy(
+            update={
+                "scene_id": f"{current_scene.scene_id}-complete",
+                "npc_id": "narrator",
+                "npc_name": "Inbox Narrator",
+                "dialogue": "Every inbox contact has been handled. Move to final review.",
+                "choices": [],
+                "is_terminal": True,
+                "related_email_ids": [email.id for email in session.emails],
+                "npcs": [],
+                "choice_transitions": {},
+            },
+            deep=True,
+        )
+
+    primary = remaining_npcs[0]
+    return current_scene.model_copy(
+        update={
+            "scene_id": f"{current_scene.scene_id}-step-{len(session.trace) + 1}",
+            "npc_id": primary.id,
+            "npc_name": primary.name,
+            "dialogue": primary.opening_line,
+            "choices": primary.choices,
+            "is_terminal": False,
+            "related_email_ids": [npc.email_id for npc in remaining_npcs],
+            "npcs": remaining_npcs,
+            "choice_transitions": {},
+        },
+        deep=True,
+    )
 
 
 def _mock_emails() -> list[EmailItem]:
@@ -238,7 +580,7 @@ def _find_scene_dialogue(session: StorySession, scene_id: str) -> str | None:
 
 
 async def _preload_next(session_id: str, session: StorySession, scene: Scene) -> None:
-    if scene.is_terminal or not scene.choices:
+    if scene.is_terminal or not scene.choices or len(scene.npcs) > 1:
         return
     preload_results: dict[str, Scene] = {}
     for choice in scene.choices:
@@ -307,10 +649,10 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
         planner_source = world_build.source
         run_seed = world_build.run_seed
         world_id = world_build.plan.world_id
-        current_location_id = world_build.plan.entry_location_id
-        world_locations = {location.id: location.scene for location in world_build.plan.locations}
-        world_transitions = world_build.plan.transitions
-        first_scene = (world_locations.get(current_location_id) or world_build.plan.locations[0].scene).model_copy(deep=True)
+        current_location_id = SHARED_WORLD_LOCATION_ID
+        first_scene = _build_shared_world_scene(world_build, emails)
+        world_locations = {current_location_id: first_scene}
+        world_transitions = {current_location_id: {}}
     else:
         try:
             first_scene = await _build_scene_async(emails, [])
@@ -358,7 +700,23 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
     if current_scene.is_terminal:
         return AdvanceSceneResponse(scene=current_scene, trace=session.trace, done=True)
 
-    allowed = {c.slug: c for c in current_scene.choices}
+    target_npc = next((npc for npc in current_scene.npcs if npc.id == request.npc_id), None)
+    if request.npc_id and current_scene.npcs and target_npc is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "NPC is no longer available in this world.", "allowed_npcs": [npc.id for npc in current_scene.npcs]},
+        )
+    if target_npc is None and current_scene.npcs:
+        target_npc = current_scene.npcs[0]
+
+    choice_source = target_npc.choices if target_npc is not None else current_scene.choices
+    related_email_ids = (
+        target_npc.related_email_ids or [target_npc.email_id]
+        if target_npc is not None
+        else current_scene.related_email_ids
+    )
+    active_npc_id = target_npc.id if target_npc is not None else current_scene.npc_id
+    allowed = {c.slug: c for c in choice_source}
     if request.choice_slug not in allowed:
         log.warning(
             "advance_scene_bad_slug session_id=%s slug=%s allowed=%s",
@@ -370,39 +728,43 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
         )
 
     chosen = allowed[request.choice_slug]
-    next_location_id = session.world_transitions.get(session.current_location_id, {}).get(request.choice_slug, "")
+    next_location_id = session.current_location_id if target_npc is not None else session.world_transitions.get(session.current_location_id, {}).get(request.choice_slug, "")
     step = TraceStep(
         scene_id=current_scene.scene_id,
-        npc_id=current_scene.npc_id,
+        npc_id=active_npc_id,
         choice_slug=chosen.slug,
         choice_intent=chosen.intent,
         choice_context=request.choice_context.strip(),
-        related_email_ids=current_scene.related_email_ids,
+        related_email_ids=related_email_ids,
         from_location_id=session.current_location_id,
         to_location_id=next_location_id,
     )
     next_trace = [*session.trace, step]
 
-    next_scene = session.preloaded_by_choice.get(request.choice_slug)
-    if next_scene is None:
-        log.info("advance_scene_cache_miss session_id=%s", session_id)
-        try:
-            if next_location_id and next_location_id in session.world_locations:
-                next_scene = _scene_with_world_state(
-                    session=session,
-                    scene=session.world_locations[next_location_id],
-                    location_id=next_location_id,
-                )
-            else:
-                next_scene = await _build_scene_async(session.emails, next_trace)
-        except Exception as exc:
-            log.exception("advance_scene_openai_failed session_id=%s", session_id)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to generate next scene: {exc}",
-            ) from exc
+    if target_npc is not None:
+        remaining_npcs = [npc.model_copy(deep=True) for npc in current_scene.npcs if npc.id != target_npc.id]
+        next_scene = _build_shared_world_next_scene(current_scene, remaining_npcs, session)
     else:
-        log.info("advance_scene_cache_hit session_id=%s", session_id)
+        next_scene = session.preloaded_by_choice.get(request.choice_slug)
+        if next_scene is None:
+            log.info("advance_scene_cache_miss session_id=%s", session_id)
+            try:
+                if next_location_id and next_location_id in session.world_locations:
+                    next_scene = _scene_with_world_state(
+                        session=session,
+                        scene=session.world_locations[next_location_id],
+                        location_id=next_location_id,
+                    )
+                else:
+                    next_scene = await _build_scene_async(session.emails, next_trace)
+            except Exception as exc:
+                log.exception("advance_scene_openai_failed session_id=%s", session_id)
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to generate next scene: {exc}",
+                ) from exc
+        else:
+            log.info("advance_scene_cache_hit session_id=%s", session_id)
 
     _attach_scene_tts(session_id=session_id, scene=next_scene)
 
@@ -410,12 +772,13 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
         session.trace = next_trace
         session.current_scene = next_scene
         session.preloaded_by_choice = {}
-        if next_location_id:
+        if next_location_id and target_npc is None:
             session.current_location_id = next_location_id
             session.visited_location_ids.add(next_location_id)
 
     _start_scene_tts_generation(session_id=session_id, scene=next_scene)
-    asyncio.create_task(_preload_next(session_id, session, next_scene))
+    if target_npc is None:
+        asyncio.create_task(_preload_next(session_id, session, next_scene))
     log.info(
         "advance_scene session_id=%s scene_id=%s done=%s trace_len=%s",
         session_id, next_scene.scene_id, next_scene.is_terminal, len(next_trace),

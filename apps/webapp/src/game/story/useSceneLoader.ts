@@ -19,6 +19,14 @@ const getErrorMessage = (error: unknown) =>
 const isPreviewVisible = (stage: RunStage) =>
   stage === 'previewing' || stage === 'ready' || stage === 'generating'
 
+const isReviewHandoffScene = (response: {
+  scene: Parameters<typeof toScenePayload>[0]['scene']
+  done: boolean
+}) =>
+  (response.done || response.scene.is_terminal)
+  && !response.scene.choices.length
+  && !response.scene.npcs.length
+
 export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   const [provider] = useState(() => createStoryProvider())
   const [runStage, setRunStage] = useState<RunStage>('previewing')
@@ -47,6 +55,29 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     },
     [],
   )
+
+  const finalizeReviewHandoff = useCallback(async (nextTrace: TraceStep[]) => {
+    if (!sessionId) {
+      return null
+    }
+
+    setTrace(nextTrace)
+    setDone(true)
+    setIsResolving(true)
+    setError(null)
+
+    try {
+      const response = await provider.resolve(sessionId)
+      setDrafts(response.drafts)
+      setRunStage('review')
+      return response
+    } catch (error) {
+      setError(getErrorMessage(error))
+      return null
+    } finally {
+      setIsResolving(false)
+    }
+  }, [provider, sessionId])
 
   const initPreview = useCallback(async () => {
     setIsStarting(true)
@@ -129,9 +160,14 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     setError(null)
     try {
       const response = await provider.advance(sessionId, {
+        npc_id: selection.npcId,
         choice_slug: selection.choiceId,
         choice_context: selection.choiceContext ?? '',
       })
+      if (isReviewHandoffScene(response)) {
+        await finalizeReviewHandoff(response.trace)
+        return scene
+      }
       return applyScene(response)
     } catch (error) {
       setError(getErrorMessage(error))
