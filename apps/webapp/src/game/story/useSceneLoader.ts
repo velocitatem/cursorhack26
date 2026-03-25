@@ -104,7 +104,10 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     setIsAdvancing(true)
     setError(null)
     try {
-      const response = await provider.advance(sessionId, { choice_slug: selection.choiceId })
+      const response = await provider.advance(sessionId, {
+        choice_slug: selection.choiceId,
+        choice_context: selection.choiceContext ?? '',
+      })
       return applyScene(response)
     } catch (error) {
       setError(getErrorMessage(error))

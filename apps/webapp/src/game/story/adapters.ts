@@ -50,6 +50,9 @@ const getTheme = (depth: number, isTerminal: boolean): SceneTheme => {
   return depth % 2 === 0 ? 'inboxPlaza' : 'cityBlock'
 }
 
+const normalizeTheme = (value: string): SceneTheme =>
+  value === 'cityBlock' ? 'cityBlock' : 'inboxPlaza'
+
 const getAppearance = (scene: StoryScene): CharacterAppearance => {
   const index = hash(`${scene.npc_id}:${scene.npc_name}`) % appearancePalette.length
   return appearancePalette[index]
@@ -64,18 +67,32 @@ const getObjective = (scene: StoryScene, done: boolean) => {
   if (done || scene.is_terminal) {
     return 'Resolve the route and review the final draft bundle.'
   }
-  return `Talk to ${scene.npc_name} and lock in the next reply path.`
+  const locationLabel = scene.world?.location_id ? ` at ${toTitleCase(scene.world.location_id)}` : ''
+  return `Talk to ${scene.npc_name}${locationLabel} and lock in the next reply path.`
 }
 
 type StorySceneEnvelope = Pick<StartSceneResponse, 'scene' | 'trace' | 'done'> | Pick<AdvanceSceneResponse, 'scene' | 'trace' | 'done'>
 
 export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): ScenePayload => {
   const isTerminal = done || scene.is_terminal
-  const theme = getTheme(trace.length, isTerminal)
-  const relatedEmailId =
-    scene.related_email_ids.length > 1
-      ? `${scene.related_email_ids.length} inbox threads`
-      : scene.related_email_ids[0] || scene.npc_id
+  const theme = scene.environment?.theme
+    ? normalizeTheme(scene.environment.theme)
+    : getTheme(trace.length, isTerminal)
+  const sourceNpcs = scene.npcs.length
+    ? scene.npcs
+    : [
+        {
+          id: scene.npc_id,
+          name: scene.npc_name,
+          email_id: scene.related_email_ids[0] || scene.npc_id,
+          position: getPosition(scene),
+          opening_line: scene.dialogue,
+          tts: scene.tts,
+          voice_id: scene.voice_id,
+          choices: scene.choices,
+          related_email_ids: scene.related_email_ids,
+        },
+      ]
 
   return {
     sceneId: scene.scene_id,
@@ -86,25 +103,43 @@ export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): Scen
       : undefined,
     environment: {
       theme,
-      spawn: spawnByTheme[theme],
+      spawn: scene.environment?.spawn ?? spawnByTheme[theme],
+      layout: scene.environment?.layout
+        ? {
+            seed: scene.environment.layout.seed,
+            bounds: scene.environment.layout.bounds,
+            blocks: scene.environment.layout.blocks,
+          }
+        : undefined,
     },
-    npcs: [
-      {
-        id: scene.npc_id,
-        name: scene.npc_name,
-        emailId: relatedEmailId,
-        position: getPosition(scene),
-        openingLine: scene.dialogue,
-        ttsUrl: scene.tts || undefined,
-        voiceId: scene.voice_id ?? undefined,
-        choices: scene.choices.map(choice => ({
-          id: choice.slug,
-          label: choice.label,
-          previewReply: toIntentPreview(choice.intent),
-        })),
-        appearance: getAppearance(scene),
-      },
-    ],
+    world: scene.world
+      ? {
+          worldId: scene.world.world_id,
+          locationId: scene.world.location_id,
+          visitedLocationIds: scene.world.visited_location_ids,
+          plannerSource: scene.world.planner_source,
+          runSeed: scene.world.run_seed,
+        }
+      : undefined,
+    npcs: sourceNpcs.map(npc => ({
+      id: npc.id,
+      name: npc.name,
+      emailId:
+        npc.related_email_ids.length > 1
+          ? `${npc.related_email_ids.length} inbox threads`
+          : npc.related_email_ids[0] || npc.email_id,
+      position: npc.position,
+      openingLine: npc.opening_line,
+      ttsUrl: npc.tts || scene.tts || undefined,
+      voiceId: npc.voice_id ?? scene.voice_id ?? undefined,
+      choices: npc.choices.map(choice => ({
+        id: choice.slug,
+        label: choice.label,
+        previewReply: toIntentPreview(choice.intent),
+        nextSceneId: scene.choice_transitions?.[choice.slug],
+      })),
+      appearance: getAppearance(scene),
+    })),
   }
 }
 

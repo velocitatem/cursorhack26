@@ -44,6 +44,8 @@ const stubDelay = (ms = 140) =>
   })
 
 const toIntent = (value: string) => value.replace(/-/g, '_')
+const toTransitions = (choices: { id: string }[], nextLocationId: string) =>
+  Object.fromEntries(choices.map(choice => [choice.id, nextLocationId]))
 
 const pickNpc = (sceneId: keyof typeof mockScenes) => mockScenes[sceneId].npcs[0]
 
@@ -82,6 +84,12 @@ const storyScenes: StoryScene[] = [
     })),
     is_terminal: false,
     related_email_ids: [inboxNpc.emailId],
+    environment: {
+      theme: 'inboxPlaza',
+      spawn: { x: 0, y: 0, z: 8 },
+    },
+    npcs: [],
+    choice_transitions: toTransitions(inboxNpc.choices, 'follow-up-row'),
   },
   {
     scene_id: mockScenes['follow-up-row'].sceneId,
@@ -96,6 +104,12 @@ const storyScenes: StoryScene[] = [
     })),
     is_terminal: false,
     related_email_ids: [followUpNpc.emailId],
+    environment: {
+      theme: 'cityBlock',
+      spawn: { x: 0, y: 0, z: 9 },
+    },
+    npcs: [],
+    choice_transitions: toTransitions(followUpNpc.choices, 'victory-lap'),
   },
   {
     scene_id: mockScenes['victory-lap'].sceneId,
@@ -106,6 +120,12 @@ const storyScenes: StoryScene[] = [
     choices: [],
     is_terminal: true,
     related_email_ids: defaultInbox.map(email => email.id),
+    environment: {
+      theme: 'inboxPlaza',
+      spawn: { x: 0, y: 0, z: 8 },
+    },
+    npcs: [],
+    choice_transitions: {},
   },
 ]
 
@@ -187,7 +207,10 @@ export const createStubStoryProvider = (): StoryProvider => ({
         npc_id: currentScene.npc_id,
         choice_slug: choice.slug,
         choice_intent: choice.intent,
+        choice_context: '',
         related_email_ids: currentScene.related_email_ids,
+        from_location_id: '',
+        to_location_id: '',
       },
     ]
     const nextSceneIndex = Math.min(session.sceneIndex + 1, storyScenes.length - 1)

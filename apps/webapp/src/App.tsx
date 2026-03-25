@@ -456,9 +456,11 @@ function GameShell({
       }
 
       stopDialogueAudio()
+      const selected = activeNpc.choices.find(choice => choice.id === choiceId)
       await chooseOption({
         npcId: activeNpc.id,
         choiceId,
+        choiceContext: selected?.nextSceneId ? `next_location:${selected.nextSceneId}` : '',
       })
       closeDialogue()
     },
@@ -544,6 +546,13 @@ function GameShell({
                 <div className="story-meta">
                   <span>Mode: {mode}</span>
                   <span>Choices locked: {trace.length}</span>
+                  <span>
+                    {scene.world
+                      ? `Location: ${scene.world.locationId} (${scene.world.visitedLocationIds.length} visited)`
+                      : 'Location: bootstrap'}
+                  </span>
+                  <span>{scene.world ? `Planner: ${scene.world.plannerSource}` : 'Planner: pending'}</span>
+                  <span>{scene.world ? `Seed: ${scene.world.runSeed}` : 'Seed: -'}</span>
                   <span>{sessionId ? 'Session live' : 'No session yet'}</span>
                 </div>
 

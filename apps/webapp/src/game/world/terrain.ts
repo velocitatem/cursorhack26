@@ -8,8 +8,16 @@ export type WorldBounds = {
   maxZ: number
 }
 
+export type VoxelBlock = {
+  x: number
+  y: number
+  z: number
+  type: VoxelMaterialType
+}
+
 export class VoxelTerrain {
   readonly group = new THREE.Group()
+  readonly blocks: VoxelBlock[] = []
   private readonly blockGeometry = new THREE.BoxGeometry(1, 1, 1)
 
   addBlock(x: number, y: number, z: number, type: VoxelMaterialType) {
@@ -18,6 +26,7 @@ export class VoxelTerrain {
     mesh.castShadow = true
     mesh.receiveShadow = true
     this.group.add(mesh)
+    this.blocks.push({ x, y, z, type })
     return mesh
   }
 

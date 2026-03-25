@@ -60,10 +60,14 @@ const glass = loadPixelTexture(
 )
 
 const createTexturedMaterial = (map: THREE.Texture, color?: number) =>
-  new THREE.MeshStandardMaterial({
-    map,
-    color,
-  })
+  new THREE.MeshStandardMaterial(
+    color === undefined
+      ? { map }
+      : {
+          map,
+          color,
+        },
+  )
 
 const materials: MaterialRecord = {
   grass: [
