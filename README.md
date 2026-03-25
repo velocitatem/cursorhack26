@@ -37,6 +37,32 @@ The system fetches your unread emails for the day and uses an LLM to generate a 
 2. **Gameplay:** The frontend renders a 3D environment using Minecraft-style primitives (`minecraft-threejs`). You interact with the world to choose your responses.
 3. **Execution:** The chosen route is flattened at the end of the run and an agent dispatches the final email replies.
 
+### Tree and route construction (technical)
+The story is built as a directed tree where each node is a prompt and each edge is a player option. A practical node shape is:
+
+```ts
+type StoryNode = {
+  id: string;
+  prompt: string; // NPC dialogue/question shown to the player
+  sourceEmailId?: string; // email this node is grounded on
+  options: Array<{
+    id: string;
+    label: string; // player-visible choice text
+    draftReply?: string; // candidate reply payload for this branch
+    nextNodeIds: string[]; // supports one or multiple follow-up scenes
+  }>;
+};
+```
+
+Construction flow:
+- Start from today's inbox emails and transform each email into one or more `StoryNode` entries.
+- For each node, prompt the LLM to return structured output only (prompt text, options, optional follow-up hints), then validate and coerce IDs deterministically.
+- Connect nodes by writing `nextNodeIds` for each option, producing a tree rooted at the first scene.
+- During gameplay, every click records a route step like `{ nodeId, optionId, timestamp }`.
+- At completion, flatten the selected path into an ordered action list and extract `draftReply` values for agent dispatch.
+
+This keeps generation (tree build), interaction (route selection), and execution (flattened sends) strictly separated, which makes the flow easier to debug and replay.
+
 ## Repository layout
 This is an Nx-managed monorepo with dedicated apps for the frontend, backend, and background workers:
 
