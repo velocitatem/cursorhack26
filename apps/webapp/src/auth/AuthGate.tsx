@@ -6,7 +6,7 @@ type AuthGateProps = {
 export function AuthGate({ authError, onContinue }: AuthGateProps) {
   return (
     <main className="auth-shell">
-      <p className="auth-kicker">Inbox Quest</p>
+      <p className="auth-kicker">holodeck</p>
       <h1 className="auth-title">Your inbox, playable.</h1>
       {authError && (
         <p className="auth-error" role="alert">Sign-in failed. Try again.</p>
