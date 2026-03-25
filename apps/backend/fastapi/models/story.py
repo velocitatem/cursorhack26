@@ -105,6 +105,7 @@ class StartSceneRequest(BaseModel):
 
 
 class AdvanceSceneRequest(BaseModel):
+    npc_id: str = ""
     choice_slug: str = Field(min_length=1)
     choice_context: str = ""
 
