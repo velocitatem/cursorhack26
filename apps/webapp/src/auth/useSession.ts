@@ -11,9 +11,14 @@ export type SessionResponse = {
   gmailScopesGranted: boolean
 }
 
+const absoluteUrlPattern = /^https?:\/\//i
+
 const resolveApiBaseUrl = () => {
   const configured = import.meta.env.VITE_API_BASE_URL?.trim()
   if (configured) {
+    if (absoluteUrlPattern.test(configured)) {
+      return '/api'
+    }
     return configured.replace(/\/+$/, '')
   }
   return '/api'
@@ -46,6 +51,32 @@ export function useSession() {
     setIsLoading(true)
 
     try {
+      const currentUrl = new URL(window.location.href)
+      const exchangeToken = currentUrl.searchParams.get('exchange_token')
+      if (exchangeToken) {
+        const exchangeResponse = await fetch(`${API_BASE_URL}/auth/exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: exchangeToken }),
+        })
+
+        if (!exchangeResponse.ok) {
+          throw new Error(`Session exchange failed with status ${exchangeResponse.status}`)
+        }
+
+        const exchangePayload = (await exchangeResponse.json()) as SessionResponse
+        currentUrl.searchParams.delete('exchange_token')
+        window.history.replaceState({}, '', currentUrl)
+        setSession(exchangePayload)
+        if (exchangePayload.authenticated) {
+          if (readAuthError() !== null) {
+            clearAuthErrorFromUrl()
+          }
+          setAuthError((prev) => (prev !== null ? null : prev))
+        }
+        return
+      }
+
       const response = await fetch(`${API_BASE_URL}/auth/session`, {
         credentials: 'include',
       })

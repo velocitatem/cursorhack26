@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import secrets
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from alveslib import get_logger
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from config import Settings
-from models.auth import SessionResponse, SessionUserPayload
+from models.auth import SessionExchangeRequest, SessionResponse, SessionUserPayload
 from services.auth.dependencies import (
     get_auth_repository,
     get_google_client,
@@ -21,10 +22,13 @@ from services.auth.google_client import GoogleOAuthClient, gmail_scopes_granted,
 from services.auth.session_service import SessionService
 from services.auth.types import SessionUser, StoredGoogleToken
 from services.auth.user_repository import AuthRepository
+from services.cache import delete_keys, get_json, set_json
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = get_logger("backend-fastapi.auth")
 POST_AUTH_REDIRECT_SESSION_KEY = "post_auth_redirect"
+EXCHANGE_TOKEN_QUERY_PARAM = "exchange_token"
+EXCHANGE_TOKEN_TTL_SECONDS = 30
 
 
 def _normalize_absolute_url(value: str | None) -> str | None:
@@ -89,6 +93,15 @@ def _redirect_with_error(request: Request, settings: Settings, error_code: str) 
 
 def _redirect_to_app(request: Request, settings: Settings) -> RedirectResponse:
     return RedirectResponse(url=_pop_post_auth_redirect(request, settings), status_code=status.HTTP_302_FOUND)
+
+
+def _append_query_param(url: str, key: str, value: str) -> str:
+    separator = "&" if urlsplit(url).query else "?"
+    return f"{url}{separator}{urlencode({key: value})}"
+
+
+def _exchange_cache_key(token: str) -> str:
+    return f"auth:exchange:{token}"
 
 
 def _serialize_session(user: SessionUser | None) -> SessionResponse:
@@ -177,8 +190,58 @@ async def google_callback(
     )
 
     app_session_token = session_service.create_session(user.id)
-    response = _redirect_to_app(request, settings)
-    session_service.set_session_cookie(response, app_session_token)
+    exchange_token = secrets.token_urlsafe(32)
+    scope = normalize_scope(token.get("scope"))
+    set_json(
+        key=_exchange_cache_key(exchange_token),
+        value={
+            "session_token": app_session_token,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "avatarUrl": user.avatar_url,
+            },
+            "gmailScopesGranted": gmail_scopes_granted(scope),
+        },
+        ttl_seconds=EXCHANGE_TOKEN_TTL_SECONDS,
+    )
+    redirect_url = _append_query_param(
+        _pop_post_auth_redirect(request, settings),
+        EXCHANGE_TOKEN_QUERY_PARAM,
+        exchange_token,
+    )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.post("/exchange", response_model=SessionResponse)
+async def exchange_session(
+    body: SessionExchangeRequest,
+    session_service: SessionService = Depends(get_session_service),
+):
+    token = body.token.strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing exchange token.")
+    cache_key = _exchange_cache_key(token)
+    payload = get_json(cache_key)
+    delete_keys(cache_key)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired exchange token.")
+    session_token = payload.get("session_token")
+    user_payload = payload.get("user")
+    gmail_scopes_granted = payload.get("gmailScopesGranted")
+    if not isinstance(session_token, str) or not isinstance(user_payload, dict) or not session_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid exchange token payload.")
+    try:
+        response_payload = SessionResponse(
+            authenticated=True,
+            user=SessionUserPayload(**user_payload),
+            gmailScopesGranted=bool(gmail_scopes_granted),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid exchange token payload.") from exc
+    response = JSONResponse(response_payload.model_dump())
+    session_service.set_session_cookie(response, session_token)
     return response
 
 

@@ -14,3 +14,7 @@ class SessionResponse(BaseModel):
     authenticated: bool
     user: SessionUserPayload | None
     gmailScopesGranted: bool
+
+
+class SessionExchangeRequest(BaseModel):
+    token: str
