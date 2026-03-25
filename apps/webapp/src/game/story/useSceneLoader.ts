@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPlaceholderScene, toScenePayload } from './adapters'
 import { createStoryProvider } from './provider'
-import type { EmailDraft, TraceStep } from './schemas'
+import type { DraftSendResult, EmailDraft, TraceStep } from './schemas'
 import type { ChoiceSelection } from './types'
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Something went wrong while talking to the story service.'
 
-export const useSceneLoader = () => {
+export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   const [provider] = useState(() => createStoryProvider())
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [scene, setScene] = useState(() => createPlaceholderScene())
@@ -42,7 +42,7 @@ export const useSceneLoader = () => {
     setScene(createPlaceholderScene())
 
     try {
-      const response = await provider.start({ user_id: 'demo-user' })
+      const response = await provider.start({ user_id: userId ?? 'demo-user' })
       setSessionId(response.session_id)
       applyScene(response)
     } catch (error) {
@@ -99,6 +99,16 @@ export const useSceneLoader = () => {
     }
   }, [done, provider, sessionId])
 
+  const sendDraft = useCallback(async (emailId: string): Promise<DraftSendResult | null> => {
+    if (!sessionId) return null
+    try {
+      return await provider.sendDraft(sessionId, emailId)
+    } catch (error) {
+      setError(getErrorMessage(error))
+      return null
+    }
+  }, [provider, sessionId])
+
   const restart = useCallback(() => {
     void start()
   }, [start])
@@ -116,6 +126,7 @@ export const useSceneLoader = () => {
     isResolving,
     chooseOption,
     resolveDrafts,
+    sendDraft,
     restart,
   }
 }

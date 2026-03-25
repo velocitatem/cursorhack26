@@ -2,11 +2,13 @@ import { ZodError } from 'zod'
 import {
   advanceSceneRequestSchema,
   advanceSceneResponseSchema,
+  draftSendResultSchema,
   resolveResponseSchema,
   startSceneRequestSchema,
   startSceneResponseSchema,
   type AdvanceSceneRequest,
   type AdvanceSceneResponse,
+  type DraftSendResult,
   type ResolveResponse,
   type StartSceneRequest,
   type StartSceneResponse,
@@ -105,15 +107,30 @@ export class StoryApiClient {
   async resolve(sessionId: string): Promise<ResolveResponse> {
     return this.request(
       `/story/scene/${sessionId}/resolve`,
-      {
-        method: 'POST',
-      },
+      { method: 'POST' },
       payload => {
         try {
           return resolveResponseSchema.parse(payload)
         } catch (error) {
           if (error instanceof ZodError) {
             throw new Error(formatValidationError('/story/scene/:session_id/resolve', error))
+          }
+          throw error
+        }
+      },
+    )
+  }
+
+  async sendDraft(sessionId: string, emailId: string): Promise<DraftSendResult> {
+    return this.request(
+      `/story/scene/${sessionId}/send/${emailId}`,
+      { method: 'POST' },
+      payload => {
+        try {
+          return draftSendResultSchema.parse(payload)
+        } catch (error) {
+          if (error instanceof ZodError) {
+            throw new Error(formatValidationError('/story/scene/:session_id/send/:email_id', error))
           }
           throw error
         }

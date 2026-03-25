@@ -1,26 +1,31 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from io import BytesIO
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from models.story import (
     AdvanceSceneRequest,
     AdvanceSceneResponse,
+    DraftSendResult,
+    EmailDraft,
     EmailItem,
     ResolveSceneRequest,
     ResolveResponse,
     Scene,
+    SendResponse,
     StartSceneRequest,
     StartSceneResponse,
     TraceStep,
 )
+from services.auth.user_repository import AuthRepository
+from services.gmail import GmailServiceError, list_todays_emails, send_draft_replies
 from services.scene_builder import build_scene, resolve_emails
 from services.tts import (
     SceneTTSCacheEntry,
@@ -44,14 +49,14 @@ class StorySession:
     preloaded_by_choice: dict[str, Scene] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    user_id: str = "demo-user"
+    resolved_drafts: list[EmailDraft] = field(default_factory=list)
 
 
 SESSIONS: dict[str, StorySession] = {}
 
 
-def _fetch_todays_emails(request: StartSceneRequest) -> list[EmailItem]:
-    if request.inbox_override:
-        return request.inbox_override
+def _mock_emails() -> list[EmailItem]:
     return [
         EmailItem(
             id="email-1",
@@ -68,6 +73,26 @@ def _fetch_todays_emails(request: StartSceneRequest) -> list[EmailItem]:
             body="Hey, following up on the proposal we discussed. Could you clarify the expected timeline and break down the pricing a bit more? We're keen to move forward.",
         ),
     ]
+
+
+async def _load_emails(body: StartSceneRequest, repo: AuthRepository) -> list[EmailItem]:
+    if body.inbox_override:
+        return body.inbox_override
+    try:
+        token = await asyncio.to_thread(repo.get_google_credentials_for_user, body.user_id)
+    except Exception:
+        log.info("gmail_inbox_token_lookup_failed user_id=%s", body.user_id)
+        token = None
+    if token:
+        try:
+            emails, _ = await list_todays_emails(token)
+            if emails:
+                log.info("gmail_inbox_loaded user_id=%s count=%s", body.user_id, len(emails))
+                return emails
+        except GmailServiceError:
+            log.warning("gmail_inbox_load_failed user_id=%s", body.user_id, exc_info=True)
+    log.info("gmail_inbox_fallback_mock user_id=%s", body.user_id)
+    return _mock_emails()
 
 
 async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) -> Scene:
@@ -148,10 +173,11 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
 
 
 @router.post("/start", response_model=StartSceneResponse)
-async def start_scene(request: StartSceneRequest) -> StartSceneResponse:
-    emails = _fetch_todays_emails(request)
+async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneResponse:
+    repo: AuthRepository = request.app.state.auth_repository
+    emails = await _load_emails(body, repo)
     if not emails:
-        log.warning("start_scene_rejected reason=no_emails user_id=%s", request.user_id)
+        log.warning("start_scene_rejected reason=no_emails user_id=%s", body.user_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No emails found for today's inbox.",
@@ -166,7 +192,7 @@ async def start_scene(request: StartSceneRequest) -> StartSceneResponse:
         ) from exc
     session_id = str(uuid4())
     _attach_scene_tts(session_id=session_id, scene=first_scene)
-    session = StorySession(emails=emails, current_scene=first_scene)
+    session = StorySession(emails=emails, current_scene=first_scene, user_id=body.user_id)
     SESSIONS[session_id] = session
     log.info(
         "start_scene session_id=%s email_count=%s scene_id=%s terminal=%s",
@@ -265,8 +291,79 @@ async def resolve_scene(session_id: str, request: ResolveSceneRequest | None = N
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve emails: {exc}",
         ) from exc
+    session.resolved_drafts = drafts
     log.info("resolve_scene_ok session_id=%s drafts=%s", session_id, len(drafts))
     return ResolveResponse(session_id=session_id, drafts=drafts)
+
+
+@router.post("/{session_id}/send", response_model=SendResponse)
+async def send_scene_emails(session_id: str, request: Request) -> SendResponse:
+    session = SESSIONS.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    if not session.resolved_drafts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No resolved drafts — call /resolve first.",
+        )
+    repo: AuthRepository = request.app.state.auth_repository
+    user_token = await asyncio.to_thread(
+        repo.get_google_credentials_for_user, session.user_id
+    )
+    if user_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No Google credentials for this user. Authenticate first.",
+        )
+    try:
+        results, _ = await send_draft_replies(user_token, session.resolved_drafts)
+    except Exception as exc:
+        log.exception("send_scene_emails_failed session_id=%s", session_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to send emails: {exc}",
+        ) from exc
+    log.info(
+        "send_scene_emails_ok session_id=%s sent=%s failed=%s",
+        session_id,
+        sum(1 for r in results if r.status == "sent"),
+        sum(1 for r in results if r.status == "failed"),
+    )
+    return SendResponse(
+        session_id=session_id,
+        results=[DraftSendResult(**asdict(r)) for r in results],
+    )
+
+
+@router.post("/{session_id}/send/{email_id}", response_model=DraftSendResult)
+async def send_single_draft(session_id: str, email_id: str, request: Request) -> DraftSendResult:
+    session = SESSIONS.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    draft = next((d for d in session.resolved_drafts if d.email_id == email_id), None)
+    if draft is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No resolved draft for email_id={email_id}. Call /resolve first.",
+        )
+    repo: AuthRepository = request.app.state.auth_repository
+    user_token = await asyncio.to_thread(repo.get_google_credentials_for_user, session.user_id)
+    if user_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No Google credentials for this user. Authenticate first.",
+        )
+    try:
+        results, _ = await send_draft_replies(user_token, [draft])
+    except Exception as exc:
+        log.exception("send_single_draft_failed session_id=%s email_id=%s", session_id, email_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to send email: {exc}",
+        ) from exc
+    result = results[0]
+    log.info("send_single_draft_ok session_id=%s email_id=%s status=%s", session_id, email_id, result.status)
+    return DraftSendResult(**asdict(result))
 
 
 @router.get("/{session_id}/{scene_id}/tts")

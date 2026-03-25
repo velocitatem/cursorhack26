@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { AuthGate } from './auth/AuthGate'
 import { useSession } from './auth/useSession'
@@ -10,9 +10,11 @@ import { useSceneLoader } from './game/story/useSceneLoader'
 import type { SceneNpc } from './game/story/types'
 
 function GameShell({
+  userId,
   userLabel,
   onLogout,
 }: {
+  userId: string
   userLabel: string
   onLogout: () => Promise<void>
 }) {
@@ -29,8 +31,16 @@ function GameShell({
     isResolving,
     chooseOption,
     resolveDrafts,
+    sendDraft,
     restart,
-  } = useSceneLoader()
+  } = useSceneLoader({ userId })
+  const [sendStatus, setSendStatus] = useState<Record<string, 'sending' | 'sent' | 'failed'>>({})
+
+  const handleSendDraft = useCallback(async (emailId: string) => {
+    setSendStatus(prev => ({ ...prev, [emailId]: 'sending' }))
+    const result = await sendDraft(emailId)
+    setSendStatus(prev => ({ ...prev, [emailId]: result?.status === 'sent' ? 'sent' : 'failed' }))
+  }, [sendDraft])
   const {
     status: dialogueAudioStatus,
     error: dialogueAudioError,
@@ -157,13 +167,30 @@ function GameShell({
 
             {drafts.length ? (
               <div className="draft-list">
-                {drafts.map(draft => (
-                  <article className="draft-item" key={draft.email_id}>
-                    <p className="draft-to">To: {draft.to}</p>
-                    <h3>{draft.subject}</h3>
-                    <p>{draft.body}</p>
-                  </article>
-                ))}
+                {drafts.map(draft => {
+                  const status = sendStatus[draft.email_id]
+                  return (
+                    <article className="draft-item" key={draft.email_id}>
+                      <p className="draft-to">To: {draft.to}</p>
+                      <h3>{draft.subject}</h3>
+                      <p>{draft.body}</p>
+                      <button
+                        className="hud-button hud-button-primary"
+                        type="button"
+                        disabled={status === 'sending' || status === 'sent'}
+                        onClick={() => void handleSendDraft(draft.email_id)}
+                      >
+                        {status === 'sending'
+                          ? 'Sending...'
+                          : status === 'sent'
+                            ? 'Sent'
+                            : status === 'failed'
+                              ? 'Retry'
+                              : 'Send'}
+                      </button>
+                    </article>
+                  )
+                })}
               </div>
             ) : (
               <p className="story-note">The route is complete. Resolve the bundle to preview the final drafts.</p>
@@ -203,8 +230,9 @@ function App() {
   }
 
   const userLabel = session.user?.name ?? session.user?.email ?? 'Player'
+  const userId = session.user?.id ?? 'demo-user'
 
-  return <GameShell userLabel={userLabel} onLogout={logout} />
+  return <GameShell userId={userId} userLabel={userLabel} onLogout={logout} />
 }
 
 export default App
