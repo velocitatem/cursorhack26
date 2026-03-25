@@ -24,7 +24,17 @@ const resolveApiBaseUrl = () => {
   return '/api'
 }
 
+// VITE_AUTH_BACKEND_URL is the direct BE origin used only for the OAuth login
+// initiation redirect. The OAuth state cookie must be set and read on the same
+// domain (BE), so this redirect must bypass the FE proxy entirely.
+const resolveAuthBackendUrl = () => {
+  const configured = import.meta.env.VITE_AUTH_BACKEND_URL?.trim()
+  if (configured) return configured.replace(/\/+$/, '')
+  return 'http://localhost:9812'
+}
+
 const API_BASE_URL = resolveApiBaseUrl()
+const AUTH_BACKEND_URL = resolveAuthBackendUrl()
 
 const EMPTY_SESSION: SessionResponse = {
   authenticated: false,
@@ -107,7 +117,13 @@ export function useSession() {
   }, [refreshSession])
 
   const beginGoogleLogin = useCallback(() => {
-    const loginUrl = new URL(`${API_BASE_URL}/auth/google/login`, window.location.origin)
+    // Login initiation MUST go directly to the BE (not through FE proxy).
+    // Authlib stores the OAuth CSRF state in a session cookie on the BE domain.
+    // Google then redirects back to BE /callback on that same domain, so the
+    // cookie is present and state verification passes. Routing this through the
+    // FE proxy would set the state cookie on the FE domain where the callback
+    // never lands, causing MismatchingStateError.
+    const loginUrl = new URL(`${AUTH_BACKEND_URL}/auth/google/login`)
     loginUrl.searchParams.set('return_to', window.location.href)
     window.location.href = loginUrl.toString()
   }, [])
