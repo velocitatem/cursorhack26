@@ -2,11 +2,13 @@ import { mockScenes } from './mockScene'
 import {
   advanceSceneRequestSchema,
   advanceSceneResponseSchema,
+  draftSendResultSchema,
   resolveResponseSchema,
   startSceneRequestSchema,
   startSceneResponseSchema,
   type AdvanceSceneRequest,
   type AdvanceSceneResponse,
+  type DraftSendResult,
   type EmailDraft,
   type EmailItem,
   type ResolveResponse,
@@ -21,6 +23,7 @@ type StoryProvider = {
   start: (request?: StartSceneRequest) => Promise<StartSceneResponse>
   advance: (sessionId: string, request: AdvanceSceneRequest) => Promise<AdvanceSceneResponse>
   resolve: (sessionId: string) => Promise<ResolveResponse>
+  sendDraft: (sessionId: string, emailId: string) => Promise<DraftSendResult>
 }
 
 type StubSession = {
@@ -201,6 +204,16 @@ export const createStubStoryProvider = (): StoryProvider => ({
     return resolveResponseSchema.parse({
       session_id: sessionId,
       drafts: buildDrafts(session.emails, session.trace),
+    })
+  },
+
+  async sendDraft(_sessionId, emailId) {
+    await stubDelay(400)
+    return draftSendResultSchema.parse({
+      email_id: emailId,
+      thread_id: null,
+      gmail_message_id: `stub-msg-${crypto.randomUUID()}`,
+      status: 'sent',
     })
   },
 })

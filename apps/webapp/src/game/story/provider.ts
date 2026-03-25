@@ -2,6 +2,7 @@ import { StoryApiClient, getDefaultStoryApiBaseUrl } from './api'
 import type {
   AdvanceSceneRequest,
   AdvanceSceneResponse,
+  DraftSendResult,
   ResolveResponse,
   StartSceneRequest,
   StartSceneResponse,
@@ -15,6 +16,7 @@ export type StoryProvider = {
   start: (request?: StartSceneRequest) => Promise<StartSceneResponse>
   advance: (sessionId: string, request: AdvanceSceneRequest) => Promise<AdvanceSceneResponse>
   resolve: (sessionId: string) => Promise<ResolveResponse>
+  sendDraft: (sessionId: string, emailId: string) => Promise<DraftSendResult>
 }
 
 export const getStoryApiMode = (): StoryApiMode =>
@@ -29,6 +31,7 @@ export const createStoryProvider = (): StoryProvider => {
       start: request => client.start(request),
       advance: (sessionId, request) => client.advance(sessionId, request),
       resolve: sessionId => client.resolve(sessionId),
+      sendDraft: (sessionId, emailId) => client.sendDraft(sessionId, emailId),
     }
   }
   return createStubStoryProvider()

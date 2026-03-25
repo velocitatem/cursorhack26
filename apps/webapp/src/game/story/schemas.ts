@@ -69,6 +69,14 @@ export const resolveResponseSchema = z.object({
   drafts: z.array(emailDraftSchema),
 })
 
+export const draftSendResultSchema = z.object({
+  email_id: z.string(),
+  thread_id: z.string().nullable(),
+  gmail_message_id: z.string().nullable(),
+  status: z.enum(['sent', 'failed']),
+  error: z.string().nullable().optional(),
+})
+
 export type EmailItem = z.infer<typeof emailItemSchema>
 export type SceneChoice = z.infer<typeof sceneChoiceSchema>
 export type StoryScene = z.infer<typeof sceneSchema>
@@ -79,3 +87,4 @@ export type StartSceneResponse = z.infer<typeof startSceneResponseSchema>
 export type AdvanceSceneResponse = z.infer<typeof advanceSceneResponseSchema>
 export type EmailDraft = z.infer<typeof emailDraftSchema>
 export type ResolveResponse = z.infer<typeof resolveResponseSchema>
+export type DraftSendResult = z.infer<typeof draftSendResultSchema>

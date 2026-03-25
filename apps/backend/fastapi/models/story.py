@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -90,3 +92,16 @@ class ResolveSceneRequest(BaseModel):
     user_context: str = ""
     # Per-email context keyed by email id for precise facts (pricing, constraints, owners, etc.)
     email_context_by_id: dict[str, str] = Field(default_factory=dict)
+
+
+class DraftSendResult(BaseModel):
+    email_id: str
+    thread_id: str | None
+    gmail_message_id: str | None
+    status: Literal["sent", "failed"]
+    error: str | None = None
+
+
+class SendResponse(BaseModel):
+    session_id: str
+    results: list[DraftSendResult]
