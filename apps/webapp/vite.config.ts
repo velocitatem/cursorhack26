@@ -19,7 +19,7 @@ const resolveProxyTarget = (value?: string) => {
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, workspaceRoot, '')
-  const storyApiTarget = resolveProxyTarget(env.VITE_STORY_API_BASE_URL)
+  const apiTarget = resolveProxyTarget(env.VITE_API_BASE_URL || env.VITE_STORY_API_BASE_URL)
 
   return {
     envDir: workspaceRoot,
@@ -28,17 +28,10 @@ export default defineConfig(({ mode }) => {
         allow: [workspaceRoot],
       },
       proxy: {
-        '/auth': {
-          target: storyApiTarget,
+        '/api': {
+          target: apiTarget,
           changeOrigin: true,
-        },
-        '/health': {
-          target: storyApiTarget,
-          changeOrigin: true,
-        },
-        '/story': {
-          target: storyApiTarget,
-          changeOrigin: true,
+          rewrite: path => path.replace(/^\/api/, ''),
         },
       },
     },

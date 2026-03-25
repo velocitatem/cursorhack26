@@ -16,7 +16,7 @@ const resolveApiBaseUrl = () => {
   if (configured) {
     return configured.replace(/\/+$/, '')
   }
-  return ''
+  return '/api'
 }
 
 const API_BASE_URL = resolveApiBaseUrl()
@@ -76,7 +76,7 @@ export function useSession() {
   }, [refreshSession])
 
   const beginGoogleLogin = useCallback(() => {
-    const loginUrl = new URL(`${API_BASE_URL}/auth/google/login`)
+    const loginUrl = new URL(`${API_BASE_URL}/auth/google/login`, window.location.origin)
     loginUrl.searchParams.set('return_to', window.location.href)
     window.location.href = loginUrl.toString()
   }, [])

@@ -143,15 +143,9 @@ export const getDefaultStoryApiBaseUrl = () =>
   (() => {
     const configured = import.meta.env.VITE_STORY_API_BASE_URL?.trim()
     if (configured) {
-      if (import.meta.env.DEV && absoluteUrlPattern.test(configured)) {
-        return ''
-      }
       return normalizeBaseUrl(configured)
     }
-    if (import.meta.env.DEV) {
-      return 'http://localhost:9812'
-    }
-    return ''
+    return '/api'
   })()
 
 export const resolveStoryAssetUrl = (path: string) => {
