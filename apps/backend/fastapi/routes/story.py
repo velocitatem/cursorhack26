@@ -116,6 +116,18 @@ def _scene_budget_for_emails(emails: list[EmailItem]) -> int:
     return max(MIN_SCENE_BUDGET, min(MAX_SCENE_BUDGET, unique_email_count + 1))
 
 
+def _all_emails_covered(emails: list[EmailItem], trace: list[TraceStep]) -> bool:
+    if not emails:
+        return False
+
+    remaining_ids = {email.id for email in emails}
+    for step in trace:
+        remaining_ids.difference_update(step.related_email_ids)
+        if not remaining_ids:
+            return True
+    return False
+
+
 async def _build_scene_async(
     emails: list[EmailItem],
     trace: list[TraceStep],
@@ -237,7 +249,12 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
     )
     _start_scene_tts_generation(session_id=session_id, scene=first_scene)
     asyncio.create_task(_preload_next(session_id, session, first_scene))
-    return StartSceneResponse(session_id=session_id, scene=first_scene, trace=[], done=first_scene.is_terminal)
+    return StartSceneResponse(
+        session_id=session_id,
+        scene=first_scene,
+        trace=[],
+        done=first_scene.is_terminal,
+    )
 
 
 @router.post("/{session_id}/advance", response_model=AdvanceSceneResponse)
@@ -296,11 +313,12 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
 
     _start_scene_tts_generation(session_id=session_id, scene=next_scene)
     asyncio.create_task(_preload_next(session_id, session, next_scene))
+    done = next_scene.is_terminal or _all_emails_covered(session.emails, next_trace)
     log.info(
         "advance_scene session_id=%s scene_id=%s done=%s trace_len=%s",
-        session_id, next_scene.scene_id, next_scene.is_terminal, len(next_trace),
+        session_id, next_scene.scene_id, done, len(next_trace),
     )
-    return AdvanceSceneResponse(scene=next_scene, trace=next_trace, done=next_scene.is_terminal)
+    return AdvanceSceneResponse(scene=next_scene, trace=next_trace, done=done)
 
 
 @router.post("/{session_id}/resolve", response_model=ResolveResponse)

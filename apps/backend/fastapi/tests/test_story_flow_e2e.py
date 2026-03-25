@@ -213,6 +213,91 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     }
 
 
+def test_story_marks_done_once_all_emails_are_covered(monkeypatch):
+    app = FastAPI()
+    app.include_router(story_router)
+
+    inbox = [
+        {
+            "id": "email-1",
+            "sender": "manager@company.com",
+            "subject": "Need status update by EOD",
+            "snippet": "Can you send a short status update before 5pm?",
+        },
+        {
+            "id": "email-2",
+            "sender": "client@startup.io",
+            "subject": "Follow-up on proposal",
+            "snippet": "Could you clarify timeline and pricing details?",
+        },
+    ]
+
+    def fake_build_scene(emails, trace, max_scenes=3):
+        assert emails
+        if not trace:
+            return Scene.model_validate(
+                {
+                    "scene_id": "scene-1",
+                    "npc_id": "email-1",
+                    "npc_name": "Manager Steve",
+                    "dialogue": "Choose how to answer both inbox threads.",
+                    "choices": [
+                        {
+                            "slug": "bundle-replies",
+                            "label": "Bundle replies",
+                            "intent": "bundle_replies",
+                        },
+                    ],
+                    "is_terminal": False,
+                    "related_email_ids": ["email-1", "email-2"],
+                }
+            )
+
+        return Scene.model_validate(
+            {
+                "scene_id": "scene-2",
+                "npc_id": "narrator",
+                "npc_name": "The Narrator",
+                "dialogue": "The inbox route is complete.",
+                "choices": [
+                    {
+                        "slug": "victory-lap",
+                        "label": "Victory lap",
+                        "intent": "victory_lap",
+                    },
+                ],
+                "is_terminal": False,
+                "related_email_ids": ["email-1", "email-2"],
+            }
+        )
+
+    monkeypatch.setattr("routes.story.build_scene", fake_build_scene)
+    monkeypatch.setattr(
+        "routes.story.ensure_scene_entry",
+        lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
+    )
+    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr("routes.story.SESSIONS", {})
+
+    client = TestClient(app)
+
+    start = client.post(
+        "/story/scene/start",
+        json={"user_id": "demo-user", "inbox_override": inbox},
+    )
+    assert start.status_code == 200
+    session_id = start.json()["session_id"]
+
+    advance = client.post(
+        f"/story/scene/{session_id}/advance",
+        json={"choice_slug": "bundle-replies"},
+    )
+    assert advance.status_code == 200
+    advance_json = advance.json()
+    assert advance_json["scene"]["is_terminal"] is False
+    assert advance_json["done"] is True
+
+
 def test_scene_tts_stream_cache_hit(monkeypatch):
     app = FastAPI()
     app.include_router(story_router)

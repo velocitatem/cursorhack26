@@ -35,15 +35,38 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   const [isAdvancing, setIsAdvancing] = useState(false)
   const [isResolving, setIsResolving] = useState(false)
 
+  const hasCoveredPreviewInbox = useCallback((nextTrace: TraceStep[]) => {
+    if (!previewEmails.length) {
+      return false
+    }
+
+    const remainingIds = new Set(previewEmails.map(email => email.id))
+    for (const step of nextTrace) {
+      for (const emailId of step.related_email_ids) {
+        remainingIds.delete(emailId)
+      }
+      if (remainingIds.size === 0) {
+        return true
+      }
+    }
+
+    return false
+  }, [previewEmails])
+
   const applyScene = useCallback(
     (response: { scene: Parameters<typeof toScenePayload>[0]['scene']; trace: TraceStep[]; done: boolean }) => {
       const nextScene = toScenePayload(response)
       setScene(nextScene)
       setTrace(response.trace)
-      setDone(response.done || response.scene.is_terminal)
+      setDone(
+        response.done
+        || response.scene.is_terminal
+        || response.scene.choices.length === 0
+        || hasCoveredPreviewInbox(response.trace)
+      )
       return nextScene
     },
-    [],
+    [hasCoveredPreviewInbox],
   )
 
   const initPreview = useCallback(async () => {
