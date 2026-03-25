@@ -8,14 +8,17 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --bg: #070b12;
-  --surface: #121927;
-  --text-primary: #f4f7fb;
-  --text-muted: #91a0b2;
-  --accent: #e2a64b;
-  --accent-hover: #c8903e;
-  --error: #d56b60;
-  --pill-bg: rgba(12, 18, 29, 0.84);
+  --bg: #020a08;
+  --surface: #071410;
+  --text-primary: #c8ffe8;
+  --text-muted: #3d6e5a;
+  --accent: #00e5b0;
+  --accent-hover: #00c49a;
+  --error: #ff4060;
+  --amber: #ffb830;
+  --glow: 0 0 18px rgba(0, 229, 176, 0.45);
+  --grid-line: rgba(0, 229, 176, 0.065);
+  --pill-bg: rgba(7, 20, 16, 0.9);
 
   color: var(--text-primary);
   background: var(--bg);
@@ -35,7 +38,9 @@ body,
 }
 
 body {
+  min-height: 100vh;
   overflow: hidden;
+  background: var(--bg);
 }
 
 h1,

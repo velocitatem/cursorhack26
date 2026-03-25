@@ -545,9 +545,10 @@ function App() {
   if (isLoading) {
     return (
       <main className="loading-shell">
-        <p className="auth-kicker">Booting</p>
-        <h1 className="auth-title">Checking your session.</h1>
-        <p className="auth-copy">Validating login.</p>
+        <p className="auth-brand">Holodeck</p>
+        <p className="auth-kicker">SYS INIT</p>
+        <h1 className="auth-title">Holodeck calibrating emitters.</h1>
+        <p className="auth-copy">Validating holodeck session token.</p>
       </main>
     )
   }
