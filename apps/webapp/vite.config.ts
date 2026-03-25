@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     envDir: workspaceRoot,
+    assetsInclude: ['**/*.fbx'],
     server: {
       fs: {
         allow: [workspaceRoot],

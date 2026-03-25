@@ -65,12 +65,15 @@ export class GameRuntime {
     this.npcManager.setScene(scene.npcs)
     this.activeNpcId = null
     this.hoveredNpcId = null
+    this.npcManager.setDialogueState(this.dialogueOpen, this.activeNpcId)
   }
 
   setDialogueOpen(active: boolean) {
     this.dialogueOpen = active
     this.player.setEnabled(!active)
+    this.player.setDialogueOpen(active)
     this.followCamera.setEnabled(!active)
+    this.npcManager.setDialogueState(active, this.activeNpcId)
     if (active) {
       this.npcManager.setInteractHint(null)
     }
@@ -79,6 +82,7 @@ export class GameRuntime {
   setActiveNpc(id: string | null) {
     this.activeNpcId = id
     this.npcManager.setHighlighted(id)
+    this.npcManager.setDialogueState(this.dialogueOpen, id)
   }
 
   private animate = () => {
@@ -95,16 +99,20 @@ export class GameRuntime {
     )
 
     this.player.getPosition(this.playerPosition)
-    this.npcManager.update(elapsed, this.playerPosition)
+    this.npcManager.update(delta, elapsed, this.playerPosition)
     this.followCamera.update(this.player.getFocusPoint(this.playerFocus))
 
-    const hoveredNpc = this.dialogueOpen
+    const hoveredNpcCandidate = this.dialogueOpen
       ? null
       : this.interactionSystem.findTarget(
           this.playerPosition,
           this.player.getForwardVector(this.playerForward),
           this.npcManager.getAll(),
         )
+    const hoveredNpc =
+      hoveredNpcCandidate && hoveredNpcCandidate.data.choices.length > 0
+        ? hoveredNpcCandidate
+        : null
     const highlightedNpcId =
       this.activeNpcId ?? hoveredNpc?.data.id ?? null
 

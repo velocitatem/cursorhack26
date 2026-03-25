@@ -5,6 +5,8 @@ import type { SceneNpc } from '../story/types'
 export class NpcManager {
   readonly group = new THREE.Group()
   private npcs: NpcEntity[] = []
+  private dialogueOpen = false
+  private activeNpcId: string | null = null
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group)
@@ -40,9 +42,19 @@ export class NpcManager {
     }
   }
 
-  update(elapsed: number, playerPosition: THREE.Vector3) {
+  setDialogueState(active: boolean, npcId: string | null) {
+    this.dialogueOpen = active
+    this.activeNpcId = npcId
+  }
+
+  update(delta: number, elapsed: number, playerPosition: THREE.Vector3) {
     for (const npc of this.npcs) {
-      npc.update(elapsed, playerPosition)
+      npc.update(
+        delta,
+        elapsed,
+        playerPosition,
+        this.dialogueOpen && npc.data.id === this.activeNpcId ? 'dialogue' : 'wave',
+      )
     }
   }
 

@@ -1,5 +1,18 @@
 import * as THREE from 'three'
 
+export type CharacterRigKind = 'player' | 'villager'
+
+export type CharacterAnimationState =
+  | 'idle'
+  | 'moveStart'
+  | 'moveLoop'
+  | 'turnLeft'
+  | 'turnRight'
+  | 'turnAround'
+  | 'interact'
+  | 'dialogue'
+  | 'wave'
+
 export type CharacterAppearance = {
   name?: string
   scale?: number
@@ -10,9 +23,10 @@ export type CharacterAppearance = {
   accentColor?: number
 }
 
-export type VoxelCharacterRig = {
+export type CharacterRig = {
   group: THREE.Group
-  update: (elapsed: number, movementStrength?: number) => void
+  update: (delta: number, elapsed: number) => void
   setHighlight: (active: boolean) => void
+  setAnimationState: (state: CharacterAnimationState) => void
   dispose: () => void
 }

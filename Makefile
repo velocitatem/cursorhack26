@@ -75,7 +75,7 @@ test: venv ## Run pytest
 ## ── Docker ───────────────────────────────────────────────────────────────────
 
 up: ## Start local backend dependencies (redis, postgres, backend-fastapi)
-	@docker compose up -d redis postgres backend-fastapi
+	@docker compose up -d --build redis postgres backend-fastapi
 
 down: ## Stop all services
 	@docker compose down

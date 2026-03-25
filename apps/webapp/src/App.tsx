@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { AuthGate } from './auth/AuthGate'
 import { useSession } from './auth/useSession'
@@ -31,29 +31,39 @@ function PreludeOverlay({
   stage,
   error,
   onRetry,
+  onBeginRun,
 }: {
   userLabel: string
   emails: EmailItem[]
   source: InboxPreviewResponse['source']
   mode: string
-  stage: 'previewing' | 'generating'
+  stage: 'previewing' | 'ready' | 'generating'
   error: string | null
   onRetry: () => void
+  onBeginRun: (emails: EmailItem[]) => void
 }) {
+  const [selectedEmails, setSelectedEmails] = useState<EmailItem[]>(emails)
+  useEffect(() => { if (stage === 'ready') setSelectedEmails(emails) }, [stage, emails])
+  const removeEmail = (id: string) => setSelectedEmails(prev => prev.filter(e => e.id !== id))
+
   const statusTitle = error
     ? 'The route generator stalled.'
     : stage === 'generating'
-      ? 'Forging the city from today’s inbox.'
-      : 'Scanning today’s threads.'
+      ? 'Forging the city from today\u2019s inbox.'
+      : stage === 'ready'
+        ? 'Your inbox is ready.'
+        : 'Scanning today\u2019s threads.'
 
   const statusCopy = error
     ? 'Retry the run and the game will rebuild from the same inbox preview flow.'
     : stage === 'generating'
       ? 'Emails are being turned into characters, dialogue, and branching reply paths.'
-      : 'Pulling in today’s most important threads before the world opens.'
+      : stage === 'ready'
+        ? 'Remove any threads you want to skip, then start the run.'
+        : 'Pulling in today\u2019s most important threads before the world opens.'
 
   const metrics = [
-    { label: 'Threads', value: emails.length.toString().padStart(2, '0') },
+    { label: 'Selected', value: selectedEmails.length.toString().padStart(2, '0') },
     { label: 'Source', value: previewSourceLabels[source] },
     { label: 'Mode', value: mode === 'stub' ? 'Demo' : 'Live' },
   ]
@@ -91,22 +101,27 @@ function PreludeOverlay({
           </div>
 
           <div className="prelude-email-list">
-            {emails.length
-              ? emails.map((email, index) => (
-                <article className="prelude-email-card" key={email.id} style={{ animationDelay: `${index * 90}ms` }}>
-                  <div className="prelude-email-meta">
-                    <span>{email.sender}</span>
-                    <span>Today</span>
-                  </div>
-                  <h3>{email.subject}</h3>
-                  <p>{email.snippet || email.body || 'This thread will become part of the route.'}</p>
-                </article>
-              ))
-              : skeletonIds.map(id => (
+            {stage === 'previewing'
+              ? skeletonIds.map(id => (
                 <article className="prelude-email-card prelude-email-skeleton" key={id}>
                   <span />
                   <span />
                   <span />
+                </article>
+              ))
+              : selectedEmails.map((email, index) => (
+                <article className="prelude-email-card" key={email.id} style={{ animationDelay: `${index * 90}ms` }}>
+                  <div className="prelude-email-meta">
+                    <span>{email.sender}</span>
+                    <span>Today</span>
+                    {stage === 'ready' ? (
+                      <button className="prelude-email-remove" onClick={() => removeEmail(email.id)} type="button">
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                  <h3>{email.subject}</h3>
+                  <p>{email.snippet || email.body || 'This thread will become part of the route.'}</p>
                 </article>
               ))}
           </div>
@@ -136,6 +151,17 @@ function PreludeOverlay({
                 Retry run
               </button>
             </div>
+          ) : stage === 'ready' ? (
+            <div className="prelude-start-cta">
+              <button
+                className="hud-button hud-button-primary"
+                disabled={!selectedEmails.length}
+                onClick={() => onBeginRun(selectedEmails)}
+                type="button"
+              >
+                Start the run
+              </button>
+            </div>
           ) : (
             <p className="story-note">The world opens automatically as soon as the first story scene is ready.</p>
           )}
@@ -152,7 +178,7 @@ function FinaleOverlay({
   runStage,
   isResolving,
   error,
-  onSendAll,
+  onSendSelected,
   onRetryDraft,
   onRestart,
 }: {
@@ -162,10 +188,19 @@ function FinaleOverlay({
   runStage: 'review' | 'sending' | 'sent'
   isResolving: boolean
   error: string | null
-  onSendAll: () => void
+  onSendSelected: (emailIds: string[]) => void
   onRetryDraft: (emailId: string) => void
   onRestart: () => void
 }) {
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(
+    () => new Set(drafts.map(d => d.email_id))
+  )
+  const toggleDraft = (id: string) => setSelectedDraftIds(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+  const selectedCount = selectedDraftIds.size
   const routeSummary = trace.map(step => ({
     id: `${step.scene_id}:${step.choice_slug}`,
     title: toReadableLabel(step.choice_slug),
@@ -287,8 +322,13 @@ function FinaleOverlay({
             <button className="hud-button" onClick={onRestart} type="button">
               Restart run
             </button>
-            <button className="hud-button hud-button-primary" onClick={onSendAll} type="button">
-              Send all with agent
+            <button
+              className="hud-button hud-button-primary"
+              disabled={!selectedCount}
+              onClick={() => onSendSelected(Array.from(selectedDraftIds))}
+              type="button"
+            >
+              Send {selectedCount} {selectedCount === 1 ? 'reply' : 'replies'}
             </button>
           </div>
         </div>
@@ -300,17 +340,30 @@ function FinaleOverlay({
                 <p className="eyebrow">Draft bundle</p>
                 <h3>Replies ready to go</h3>
               </div>
-              <span className="source-chip">{drafts.length} threads</span>
+              <span className="source-chip">{selectedCount} of {drafts.length} selected</span>
             </div>
 
             <div className="finale-list">
-              {drafts.map(draft => (
-                <article className="finale-email-card" key={draft.email_id}>
-                  <p className="draft-to">To: {draft.to}</p>
-                  <h3>{draft.subject}</h3>
-                  <p>{draft.body}</p>
-                </article>
-              ))}
+              {drafts.map(draft => {
+                const included = selectedDraftIds.has(draft.email_id)
+                return (
+                  <article
+                    className={`finale-email-card${included ? '' : ' finale-email-card-excluded'}`}
+                    key={draft.email_id}
+                  >
+                    <p className="draft-to">To: {draft.to}</p>
+                    <h3>{draft.subject}</h3>
+                    <p>{draft.body}</p>
+                    <button
+                      className={`email-toggle${included ? ' email-toggle-on' : ''}`}
+                      onClick={() => toggleDraft(draft.email_id)}
+                      type="button"
+                    >
+                      {included ? 'Include' : 'Skip'}
+                    </button>
+                  </article>
+                )
+              })}
             </div>
           </div>
 
@@ -366,8 +419,9 @@ function GameShell({
     isResolving,
     isPreviewVisible,
     chooseOption,
-    sendAllDrafts,
     sendDraft,
+    sendSelectedDrafts,
+    beginRun,
     restart,
   } = useSceneLoader({ userId })
   const {
@@ -388,7 +442,8 @@ function GameShell({
   const showWorld = !isPreviewVisible
   const showHud = runStage === 'playing'
   const showFinale = isResolving || runStage === 'review' || runStage === 'sending' || runStage === 'sent'
-  const previewStage = runStage === 'generating' ? 'generating' : 'previewing'
+  const previewStage: 'previewing' | 'ready' | 'generating' =
+    runStage === 'generating' ? 'generating' : runStage === 'ready' ? 'ready' : 'previewing'
   const finaleStage: 'review' | 'sending' | 'sent' =
     runStage === 'sending' || runStage === 'sent' ? runStage : 'review'
 
@@ -396,8 +451,22 @@ function GameShell({
     stopDialogueAudio()
   }, [scene.sceneId, stopDialogueAudio])
 
+  useEffect(() => {
+    if (!activeNpc) {
+      return
+    }
+
+    if (showFinale || activeNpc.choices.length === 0) {
+      stopDialogueAudio()
+      closeDialogue()
+    }
+  }, [activeNpc, closeDialogue, showFinale, stopDialogueAudio])
+
   const handleNpcInteract = useCallback(
     (npc: SceneNpc) => {
+      if (!npc.choices.length) {
+        return
+      }
       void playNpc(npc)
       openDialogue(npc.id)
     },
@@ -431,9 +500,15 @@ function GameShell({
     restart()
   }, [closeDialogue, restart, stopDialogueAudio])
 
-  const handleSendAll = useCallback(() => {
-    void sendAllDrafts()
-  }, [sendAllDrafts])
+  const handleBeginRun = useCallback(
+    (emails: EmailItem[]) => { void beginRun(emails) },
+    [beginRun],
+  )
+
+  const handleSendSelected = useCallback(
+    (emailIds: string[]) => { void sendSelectedDrafts(emailIds) },
+    [sendSelectedDrafts],
+  )
 
   const handleRetryDraft = useCallback(
     (emailId: string) => {
@@ -507,6 +582,7 @@ function GameShell({
           stage={previewStage}
           error={error}
           onRetry={handleRestart}
+          onBeginRun={handleBeginRun}
         />
       ) : null}
 
@@ -518,7 +594,7 @@ function GameShell({
           runStage={finaleStage}
           isResolving={isResolving}
           error={error}
-          onSendAll={handleSendAll}
+          onSendSelected={handleSendSelected}
           onRetryDraft={handleRetryDraft}
           onRestart={handleRestart}
         />

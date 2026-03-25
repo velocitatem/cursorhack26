@@ -106,7 +106,7 @@ export const DialogueOverlay = ({
             ))}
           </div>
         ) : (
-          <p className="dialogue-status">No more branching choices here. The final review opens automatically.</p>
+          <p className="dialogue-status">The route is locked. Opening the final review.</p>
         )}
 
         {isAdvancing ? (

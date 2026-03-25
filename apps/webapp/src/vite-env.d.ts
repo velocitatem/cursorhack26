@@ -28,3 +28,18 @@ declare module 'three/examples/jsm/controls/OrbitControls' {
     dispose(): void
   }
 }
+
+declare module 'three/examples/jsm/loaders/FBXLoader.js' {
+  import { Group, Loader, LoadingManager } from 'three'
+
+  export class FBXLoader extends Loader<Group> {
+    constructor(manager?: LoadingManager)
+    loadAsync(url: string, onProgress?: (event: ProgressEvent<EventTarget>) => void): Promise<Group>
+  }
+}
+
+declare module 'three/examples/jsm/utils/SkeletonUtils.js' {
+  import { Object3D } from 'three'
+
+  export function clone<T extends Object3D>(source: T): T
+}

@@ -11,12 +11,13 @@ import type {
 } from './schemas'
 import type { ChoiceSelection } from './types'
 
-type RunStage = 'previewing' | 'generating' | 'playing' | 'review' | 'sending' | 'sent'
+type RunStage = 'previewing' | 'ready' | 'generating' | 'playing' | 'review' | 'sending' | 'sent'
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Something went wrong while talking to the story service.'
 
-const isPreviewVisible = (stage: RunStage) => stage === 'previewing' || stage === 'generating'
+const isPreviewVisible = (stage: RunStage) =>
+  stage === 'previewing' || stage === 'ready' || stage === 'generating'
 
 export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   const [provider] = useState(() => createStoryProvider())
@@ -45,7 +46,7 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     [],
   )
 
-  const start = useCallback(async () => {
+  const initPreview = useCallback(async () => {
     setIsStarting(true)
     setIsAdvancing(false)
     setIsResolving(false)
@@ -70,44 +71,51 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
         return
       }
 
-      setRunStage('generating')
-      const response = await provider.start({
-        user_id: userId ?? 'demo-user',
-        inbox_override: preview.emails,
-      })
-      setSessionId(response.session_id)
-      applyScene(response)
-      setRunStage('playing')
-    } catch (error) {
+      setRunStage('ready')
+    } catch (err) {
       setScene(
         createPlaceholderScene(
           'Story Route Offline',
           'Check the backend connection or retry the inbox run.',
         ),
       )
-      setError(getErrorMessage(error))
-      setRunStage('previewing')
+      setError(getErrorMessage(err))
     } finally {
       setIsStarting(false)
+    }
+  }, [provider, userId])
+
+  const beginRun = useCallback(async (emails: EmailItem[]) => {
+    setRunStage('generating')
+    setError(null)
+    try {
+      const response = await provider.start({
+        user_id: userId ?? 'demo-user',
+        inbox_override: emails,
+      })
+      setSessionId(response.session_id)
+      applyScene(response)
+      setRunStage('playing')
+    } catch (err) {
+      setError(getErrorMessage(err))
+      setRunStage('ready')
     }
   }, [applyScene, provider, userId])
 
   useEffect(() => {
-    void start()
-  }, [start])
+    void initPreview()
+  }, [initPreview])
 
   const chooseOption = useCallback(async (selection: ChoiceSelection) => {
-    if (!sessionId) {
-      return scene
-    }
+    if (!sessionId) return scene
 
     setIsAdvancing(true)
     setError(null)
     try {
       const response = await provider.advance(sessionId, { choice_slug: selection.choiceId })
       return applyScene(response)
-    } catch (error) {
-      setError(getErrorMessage(error))
+    } catch (err) {
+      setError(getErrorMessage(err))
       return scene
     } finally {
       setIsAdvancing(false)
@@ -115,9 +123,7 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   }, [applyScene, provider, scene, sessionId])
 
   const resolveDrafts = useCallback(async () => {
-    if (!sessionId || !done) {
-      return null
-    }
+    if (!sessionId || !done) return null
 
     setIsResolving(true)
     setError(null)
@@ -125,8 +131,8 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
       const response = await provider.resolve(sessionId)
       setDrafts(response.drafts)
       return response
-    } catch (error) {
-      setError(getErrorMessage(error))
+    } catch (err) {
+      setError(getErrorMessage(err))
       return null
     } finally {
       setIsResolving(false)
@@ -134,30 +140,19 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   }, [done, provider, sessionId])
 
   useEffect(() => {
-    if (!done || !sessionId || isResolving || drafts.length > 0 || runStage !== 'playing') {
-      return
-    }
+    if (!done || !sessionId || isResolving || drafts.length > 0 || runStage !== 'playing') return
 
     let cancelled = false
-
     const resolve = async () => {
       const response = await resolveDrafts()
-      if (!cancelled && response?.drafts) {
-        setRunStage('review')
-      }
+      if (!cancelled && response?.drafts) setRunStage('review')
     }
-
     void resolve()
-
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [done, drafts.length, isResolving, resolveDrafts, runStage, sessionId])
 
   const sendAllDrafts = useCallback(async (): Promise<SendResponse | null> => {
-    if (!sessionId || !drafts.length) {
-      return null
-    }
+    if (!sessionId || !drafts.length) return null
 
     setRunStage('sending')
     setError(null)
@@ -166,8 +161,8 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
       setSendResults(response.results)
       setRunStage('sent')
       return response
-    } catch (error) {
-      setError(getErrorMessage(error))
+    } catch (err) {
+      setError(getErrorMessage(err))
       setRunStage('review')
       return null
     }
@@ -178,22 +173,34 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
 
     try {
       const result = await provider.sendDraft(sessionId, emailId)
-      setSendResults(previous => {
-        if (!previous.length) {
-          return [result]
-        }
-        return previous.map(entry => (entry.email_id === emailId ? result : entry))
-      })
+      setSendResults(prev =>
+        prev.length
+          ? prev.map(e => (e.email_id === emailId ? result : e))
+          : [result]
+      )
       return result
-    } catch (error) {
-      setError(getErrorMessage(error))
+    } catch (err) {
+      setError(getErrorMessage(err))
       return null
     }
   }, [provider, sessionId])
 
-  const restart = useCallback(() => {
-    void start()
-  }, [start])
+  const sendSelectedDrafts = useCallback(async (emailIds: string[]) => {
+    if (!sessionId || !emailIds.length) return
+
+    setRunStage('sending')
+    setError(null)
+    try {
+      const results = await Promise.all(emailIds.map(id => provider.sendDraft(sessionId, id)))
+      setSendResults(results)
+      setRunStage('sent')
+    } catch (err) {
+      setError(getErrorMessage(err))
+      setRunStage('review')
+    }
+  }, [provider, sessionId])
+
+  const restart = useCallback(() => { void initPreview() }, [initPreview])
 
   return {
     mode: provider.mode,
@@ -215,6 +222,8 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     resolveDrafts,
     sendAllDrafts,
     sendDraft,
+    sendSelectedDrafts,
+    beginRun,
     restart,
   }
 }

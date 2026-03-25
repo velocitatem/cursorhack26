@@ -1,6 +1,7 @@
 import * as THREE from 'three'
-import { createVoxelCharacter } from '../characters/createVoxelCharacter'
-import type { VoxelCharacterRig } from '../characters/types'
+import { createCharacterRig } from '../characters/createCharacterRig'
+import { createCharacterNameplate } from '../characters/characterUi'
+import type { CharacterAnimationState, CharacterRig } from '../characters/types'
 import type { SceneNpc } from '../story/types'
 
 const createInteractHint = () => {
@@ -45,28 +46,35 @@ const createInteractHint = () => {
 
 export class NpcEntity {
   readonly data: SceneNpc
-  readonly rig: VoxelCharacterRig
+  readonly rig: CharacterRig
   readonly group: THREE.Group
   private readonly facing = new THREE.Vector3()
   private readonly hintSprite: THREE.Sprite | null
+  private readonly nameplateSprite: THREE.Sprite | null
 
   constructor(data: SceneNpc) {
     this.data = data
-    this.rig = createVoxelCharacter({
+    this.rig = createCharacterRig('villager', {
       ...data.appearance,
-      name: data.name,
     })
     this.group = this.rig.group
     this.group.position.set(data.position.x, data.position.y, data.position.z)
     this.hintSprite = createInteractHint()
+    this.nameplateSprite = createCharacterNameplate(data.name, 2.55)
     if (this.hintSprite) this.group.add(this.hintSprite)
+    if (this.nameplateSprite) this.group.add(this.nameplateSprite)
   }
 
   distanceTo(target: THREE.Vector3) {
     return this.group.position.distanceTo(target)
   }
 
-  update(elapsed: number, playerPosition: THREE.Vector3) {
+  update(
+    delta: number,
+    elapsed: number,
+    playerPosition: THREE.Vector3,
+    animationState: CharacterAnimationState,
+  ) {
     this.facing.subVectors(playerPosition, this.group.position)
     this.facing.y = 0
 
@@ -74,7 +82,8 @@ export class NpcEntity {
       this.group.rotation.y = Math.atan2(this.facing.x, this.facing.z)
     }
 
-    this.rig.update(elapsed, 0.12)
+    this.rig.setAnimationState(animationState)
+    this.rig.update(delta, elapsed)
   }
 
   setHighlighted(active: boolean) {
@@ -87,6 +96,8 @@ export class NpcEntity {
 
   dispose() {
     this.rig.dispose()
+    if (this.nameplateSprite?.material.map) this.nameplateSprite.material.map.dispose()
+    this.nameplateSprite?.material.dispose()
     if (this.hintSprite?.material.map) this.hintSprite.material.map.dispose()
     this.hintSprite?.material.dispose()
   }

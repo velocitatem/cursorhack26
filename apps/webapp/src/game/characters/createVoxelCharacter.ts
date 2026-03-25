@@ -1,5 +1,13 @@
 import * as THREE from 'three'
-import type { CharacterAppearance, VoxelCharacterRig } from './types'
+import type { CharacterAppearance, CharacterAnimationState, CharacterRig } from './types'
+
+const walkLikeStates = new Set<CharacterAnimationState>([
+  'moveStart',
+  'moveLoop',
+  'turnLeft',
+  'turnRight',
+  'turnAround',
+])
 
 const createPart = (
   size: THREE.Vector3Tuple,
@@ -20,48 +28,10 @@ const createPart = (
   return mesh
 }
 
-const createNameplate = (label: string) => {
-  const canvas = document.createElement('canvas')
-  canvas.width = 512
-  canvas.height = 128
-
-  const context = canvas.getContext('2d')
-
-  if (!context) {
-    return null
-  }
-
-  context.clearRect(0, 0, canvas.width, canvas.height)
-  context.fillStyle = 'rgba(9, 12, 18, 0.78)'
-  context.fillRect(12, 20, canvas.width - 24, canvas.height - 40)
-  context.strokeStyle = 'rgba(255, 255, 255, 0.16)'
-  context.lineWidth = 4
-  context.strokeRect(12, 20, canvas.width - 24, canvas.height - 40)
-  context.font = '600 54px Inter, system-ui, sans-serif'
-  context.textAlign = 'center'
-  context.textBaseline = 'middle'
-  context.fillStyle = '#f8fafc'
-  context.fillText(label, canvas.width / 2, canvas.height / 2)
-
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-
-  const material = new THREE.SpriteMaterial({
-    map: texture,
-    transparent: true,
-    depthWrite: false,
-  })
-  const sprite = new THREE.Sprite(material)
-  sprite.scale.set(2.8, 0.7, 1)
-  sprite.position.set(0, 2.15, 0)
-  return sprite
-}
-
 export const createVoxelCharacter = (
   appearance: CharacterAppearance = {},
-): VoxelCharacterRig => {
+): CharacterRig => {
   const {
-    name,
     scale = 1,
     skinColor = 0xf2c9a5,
     shirtColor = 0x4f8df6,
@@ -72,9 +42,9 @@ export const createVoxelCharacter = (
 
   const group = new THREE.Group()
   const rig = new THREE.Group()
-  const label = name ? createNameplate(name) : null
   const highlightMaterials: THREE.MeshStandardMaterial[] = []
   const idleSeed = Math.random() * Math.PI * 2
+  let animationState: CharacterAnimationState = 'idle'
 
   const register = (mesh: THREE.Mesh) => {
     const material = mesh.material
@@ -89,7 +59,6 @@ export const createVoxelCharacter = (
   const leftArm = createPart([0.26, 0.92, 0.26], accentColor, [-0.6, 1.1, 0])
   const rightArm = createPart([0.26, 0.92, 0.26], accentColor, [0.6, 1.1, 0])
 
-  // legs use pivot groups so shoes rotate with the leg
   const legTopY = 0.95
   const leftLegPivot = new THREE.Group()
   leftLegPivot.position.set(-0.2, legTopY, 0)
@@ -106,34 +75,70 @@ export const createVoxelCharacter = (
   for (const mesh of [head, body, leftArm, rightArm, leftLeg, rightLeg, leftShoe, rightShoe]) {
     register(mesh)
   }
+
   rig.add(head, body, leftArm, rightArm, leftLegPivot, rightLegPivot)
-
-  if (label) {
-    group.add(label)
-  }
-
   group.add(rig)
   group.scale.setScalar(scale)
 
   return {
     group,
-    update: (elapsed: number, movementStrength = 0) => {
-      const walk = Math.min(Math.max(movementStrength, 0), 1)
-      const swing = Math.sin(elapsed * 9 + idleSeed) * 0.65 * walk
-      const idleBob = Math.sin(elapsed * 3 + idleSeed) * (walk > 0 ? 0.05 : 0.025)
+    update: (_delta: number, elapsed: number) => {
+      const idleBob = Math.sin(elapsed * 3 + idleSeed) * 0.025
+      const talkSwing = Math.sin(elapsed * 7 + idleSeed)
+      const waveSwing = Math.sin(elapsed * 10 + idleSeed)
+      const walkSwing = Math.sin(elapsed * 9 + idleSeed) * 0.65
 
       rig.position.y = -0.5 + idleBob
-      head.rotation.y = Math.sin(elapsed * 0.75 + idleSeed) * 0.08
-      leftArm.rotation.x = swing
-      rightArm.rotation.x = -swing
-      leftLegPivot.rotation.x = -swing
-      rightLegPivot.rotation.x = swing
+      head.rotation.set(0, Math.sin(elapsed * 0.75 + idleSeed) * 0.08, 0)
+      leftArm.rotation.set(0, 0, 0)
+      rightArm.rotation.set(0, 0, 0)
+      leftLegPivot.rotation.set(0, 0, 0)
+      rightLegPivot.rotation.set(0, 0, 0)
+
+      if (walkLikeStates.has(animationState)) {
+        leftArm.rotation.x = walkSwing
+        rightArm.rotation.x = -walkSwing
+        leftLegPivot.rotation.x = -walkSwing
+        rightLegPivot.rotation.x = walkSwing
+
+        if (animationState === 'turnLeft') {
+          body.rotation.y = 0.12
+        } else if (animationState === 'turnRight') {
+          body.rotation.y = -0.12
+        } else if (animationState === 'turnAround') {
+          body.rotation.y = Math.sin(elapsed * 4 + idleSeed) * 0.18
+        } else {
+          body.rotation.y = 0
+        }
+
+        return
+      }
+
+      body.rotation.y = 0
+
+      if (animationState === 'wave' || animationState === 'interact') {
+        rightArm.rotation.z = -0.2
+        rightArm.rotation.x = -1.1 + waveSwing * 0.38
+        leftArm.rotation.x = Math.sin(elapsed * 4 + idleSeed) * 0.12
+        head.rotation.y = Math.sin(elapsed * 1.6 + idleSeed) * 0.16
+        return
+      }
+
+      if (animationState === 'dialogue') {
+        leftArm.rotation.x = talkSwing * 0.24
+        rightArm.rotation.x = -talkSwing * 0.24
+        head.rotation.x = Math.sin(elapsed * 6 + idleSeed) * 0.04
+        head.rotation.y = Math.sin(elapsed * 4 + idleSeed) * 0.1
+      }
     },
     setHighlight: (active: boolean) => {
       for (const material of highlightMaterials) {
         material.emissive.setHex(active ? 0x2f5485 : 0x000000)
         material.emissiveIntensity = active ? 0.4 : 0
       }
+    },
+    setAnimationState: (state: CharacterAnimationState) => {
+      animationState = state
     },
     dispose: () => {
       group.traverse((obj: THREE.Object3D) => {
@@ -152,11 +157,6 @@ export const createVoxelCharacter = (
           }
         }
       })
-
-      if (label?.material.map) {
-        label.material.map.dispose()
-      }
-      label?.material.dispose()
     },
   }
 }
