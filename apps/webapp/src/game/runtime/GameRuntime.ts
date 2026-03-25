@@ -60,6 +60,7 @@ export class GameRuntime {
       this.mapGroup = map.group
       this.mapSignature = mapSignature
       this.player.setBounds(map.bounds)
+      this.player.setCollisionCells(map.collisionCells)
       this.world.scene.add(map.group)
     }
 

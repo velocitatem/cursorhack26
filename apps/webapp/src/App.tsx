@@ -482,6 +482,8 @@ function GameShell({
                   ? `Location: ${scene.world.locationId} (${scene.world.visitedLocationIds.length} visited)`
                   : 'Location: bootstrap'}
               </span>
+              <span>{scene.world ? `Planner: ${scene.world.plannerSource}` : 'Planner: pending'}</span>
+              <span>{scene.world ? `Seed: ${scene.world.runSeed}` : 'Seed: -'}</span>
               <span>{sessionId ? 'Session live' : 'No session yet'}</span>
             </div>
 

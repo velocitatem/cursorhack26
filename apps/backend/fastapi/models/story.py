@@ -41,6 +41,8 @@ class SceneWorldState(BaseModel):
     world_id: str = Field(min_length=1)
     location_id: str = Field(min_length=1)
     visited_location_ids: list[str] = Field(default_factory=list)
+    planner_source: str = "fallback"
+    run_seed: int = 0
 
 
 class EmailItem(BaseModel):

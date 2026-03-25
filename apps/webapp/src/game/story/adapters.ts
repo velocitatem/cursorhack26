@@ -117,6 +117,8 @@ export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): Scen
           worldId: scene.world.world_id,
           locationId: scene.world.location_id,
           visitedLocationIds: scene.world.visited_location_ids,
+          plannerSource: scene.world.planner_source,
+          runSeed: scene.world.run_seed,
         }
       : undefined,
     npcs: sourceNpcs.map(npc => ({

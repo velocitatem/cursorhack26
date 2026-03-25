@@ -51,6 +51,8 @@ const sceneWorldSchema = z.object({
   world_id: z.string().min(1),
   location_id: z.string().min(1),
   visited_location_ids: z.array(z.string()).default([]),
+  planner_source: z.string().default('fallback'),
+  run_seed: z.number().int().default(0),
 })
 
 const sceneNpcSchema = z.object({

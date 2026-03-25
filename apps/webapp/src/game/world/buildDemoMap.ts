@@ -6,6 +6,7 @@ import type { SceneTheme } from '../story/types'
 export type DemoMap = {
   group: THREE.Group
   bounds: WorldBounds
+  collisionCells: Set<string>
 }
 
 type SceneLayoutPayload = {
@@ -108,14 +109,38 @@ const allowedTypes = new Set<VoxelMaterialType>([
   'accent',
 ])
 
-const toBlockType = (value: string): VoxelMaterialType =>
-  allowedTypes.has(value as VoxelMaterialType) ? (value as VoxelMaterialType) : 'stone'
+const blockAliases: Record<string, VoxelMaterialType> = {
+  cobblestone: 'stone',
+  log: 'tree',
+  planks: 'wood',
+  leaves: 'leaf',
+  glowstone: 'glass',
+  path: 'plaza',
+  road: 'plaza',
+  soil: 'dirt',
+}
+
+const toBlockType = (value: string): VoxelMaterialType => {
+  const normalized = value.trim().toLowerCase()
+  const alias = blockAliases[normalized]
+  if (alias) return alias
+  return allowedTypes.has(normalized as VoxelMaterialType) ? (normalized as VoxelMaterialType) : 'grass'
+}
 
 const buildFromLayout = (terrain: VoxelTerrain, layout: SceneLayoutPayload) => {
   for (const block of layout.blocks) {
     terrain.addBlock(block.x, block.y, block.z, toBlockType(block.type))
   }
 }
+
+const passableTypes = new Set<VoxelMaterialType>(['grass', 'plaza', 'sand'])
+
+const buildCollisionCells = (terrain: VoxelTerrain) =>
+  new Set(
+    terrain.blocks
+      .filter(block => block.y >= 0 && !passableTypes.has(block.type))
+      .map(block => `${Math.round(block.x)},${Math.round(block.z)}`),
+  )
 
 export const buildDemoMap = (theme: SceneTheme, layout?: SceneLayoutPayload): DemoMap => {
   const terrain = new VoxelTerrain()
@@ -124,6 +149,7 @@ export const buildDemoMap = (theme: SceneTheme, layout?: SceneLayoutPayload): De
     return {
       group: terrain.group,
       bounds: layout.bounds,
+      collisionCells: buildCollisionCells(terrain),
     }
   }
 
@@ -136,5 +162,6 @@ export const buildDemoMap = (theme: SceneTheme, layout?: SceneLayoutPayload): De
   return {
     group: terrain.group,
     bounds: defaultBounds,
+    collisionCells: buildCollisionCells(terrain),
   }
 }

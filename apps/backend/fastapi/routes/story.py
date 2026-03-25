@@ -26,10 +26,11 @@ from models.story import (
     StartSceneResponse,
     TraceStep,
 )
-from models.world import WorldPlan
+from models.world import WorldPlanBuild
 from services.auth.user_repository import AuthRepository
 from services.gmail import GmailServiceError, list_todays_emails, send_draft_replies
 from services.scene_builder import build_scene, resolve_emails
+from services.world_planner import _simple_layout
 from services.tts import (
     SceneTTSCacheEntry,
     ensure_scene_entry,
@@ -60,6 +61,8 @@ class StorySession:
     visited_location_ids: set[str] = field(default_factory=set)
     world_locations: dict[str, Scene] = field(default_factory=dict)
     world_transitions: dict[str, dict[str, str]] = field(default_factory=dict)
+    planner_source: str = "fallback"
+    run_seed: int = 0
 
 
 SESSIONS: dict[str, StorySession] = {}
@@ -120,7 +123,7 @@ async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) ->
     return await asyncio.to_thread(build_scene, emails, trace)
 
 
-async def _build_world_plan_async(emails: list[EmailItem], user_id: str) -> WorldPlan:
+async def _build_world_plan_async(emails: list[EmailItem], user_id: str) -> WorldPlanBuild:
     run_seed = int(uuid4().int % 1_000_000_000)
     return await asyncio.to_thread(build_world_plan, emails, user_id, 4, run_seed)
 
@@ -132,7 +135,12 @@ def _scene_with_world_state(session: StorySession, scene: Scene, location_id: st
         world_id=session.world_id or "legacy-world",
         location_id=location_id,
         visited_location_ids=sorted(session.visited_location_ids | {location_id}),
+        planner_source=session.planner_source,
+        run_seed=session.run_seed,
     )
+    if hydrated.environment and hydrated.environment.layout is None:
+        loc_idx = list(session.world_locations.keys()).index(location_id) if location_id in session.world_locations else 0
+        hydrated.environment.layout = _simple_layout(seed=session.run_seed or 0, location_idx=loc_idx)
     if hydrated.npcs:
         primary = hydrated.npcs[0]
         hydrated.npc_id = primary.id
@@ -242,9 +250,9 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No emails found for today's inbox.",
         )
-    world_plan: WorldPlan | None = None
+    world_build: WorldPlanBuild | None = None
     try:
-        world_plan = await _build_world_plan_async(emails, body.user_id)
+        world_build = await _build_world_plan_async(emails, body.user_id)
     except Exception:
         log.warning("world_plan_build_failed user_id=%s", body.user_id, exc_info=True)
     first_scene: Scene
@@ -252,12 +260,16 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
     current_location_id = ""
     world_locations: dict[str, Scene] = {}
     world_transitions: dict[str, dict[str, str]] = {}
-    if world_plan and world_plan.locations:
-        world_id = world_plan.world_id
-        current_location_id = world_plan.entry_location_id
-        world_locations = {location.id: location.scene for location in world_plan.locations}
-        world_transitions = world_plan.transitions
-        first_scene = (world_locations.get(current_location_id) or world_plan.locations[0].scene).model_copy(deep=True)
+    planner_source = "fallback"
+    run_seed = 0
+    if world_build and world_build.plan.locations:
+        planner_source = world_build.source
+        run_seed = world_build.run_seed
+        world_id = world_build.plan.world_id
+        current_location_id = world_build.plan.entry_location_id
+        world_locations = {location.id: location.scene for location in world_build.plan.locations}
+        world_transitions = world_build.plan.transitions
+        first_scene = (world_locations.get(current_location_id) or world_build.plan.locations[0].scene).model_copy(deep=True)
     else:
         try:
             first_scene = await _build_scene_async(emails, [])
@@ -277,6 +289,8 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
         visited_location_ids={current_location_id} if current_location_id else set(),
         world_locations=world_locations,
         world_transitions=world_transitions,
+        planner_source=planner_source,
+        run_seed=run_seed,
     )
     if current_location_id:
         first_scene = _scene_with_world_state(session=session, scene=first_scene, location_id=current_location_id)

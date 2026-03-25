@@ -59,6 +59,8 @@ export type ScenePayload = {
     worldId: string
     locationId: string
     visitedLocationIds: string[]
+    plannerSource: string
+    runSeed: number
   }
   npcs: SceneNpc[]
 }

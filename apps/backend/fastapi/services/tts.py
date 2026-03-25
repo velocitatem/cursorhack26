@@ -200,6 +200,11 @@ def _is_paid_plan_voice_error(exc: Exception) -> bool:
     return "paid_plan_required" in message or "free users cannot use library voices via the api" in message
 
 
+def _is_quota_exhausted(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "quota_exceeded" in message or "api error (401)" in message or "api error (402)" in message
+
+
 def scene_tts_url(session_id: str, scene_id: str) -> str:
     return f"/story/scene/{session_id}/{scene_id}/tts"
 
@@ -351,6 +356,9 @@ def generate_and_cache_scene_tts(session_id: str, scene_id: str, text: str) -> N
                     voice_id = next_voice_id
                     continue
             set_scene_failed(session_id=session_id, scene_id=scene_id, voice_id=voice_id, error=str(exc))
+            if _is_quota_exhausted(exc):
+                log.warning("tts_scene_quota_exhausted_skipped session_id=%s scene_id=%s", session_id, scene_id)
+                return
             log.exception("tts_scene_failed session_id=%s scene_id=%s", session_id, scene_id)
             raise
 

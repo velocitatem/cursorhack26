@@ -16,3 +16,9 @@ class WorldPlan(BaseModel):
     entry_location_id: str = Field(min_length=1)
     locations: list[WorldLocation] = Field(default_factory=list)
     transitions: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+
+class WorldPlanBuild(BaseModel):
+    plan: WorldPlan
+    source: str = "fallback"
+    run_seed: int = 0
