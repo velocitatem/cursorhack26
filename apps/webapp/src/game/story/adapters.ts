@@ -1,5 +1,6 @@
 import type { CharacterAppearance } from '../characters/types'
 import type { AdvanceSceneResponse, StartSceneResponse, StoryScene } from './schemas'
+import { mailboxDisplayName } from './mailboxDisplayName'
 import type { ScenePayload, SceneTheme, SceneVector } from './types'
 
 const spawnByTheme: Record<SceneTheme, SceneVector> = {
@@ -68,7 +69,7 @@ const getObjective = (scene: StoryScene, done: boolean) => {
     return 'Resolve the route and review the final draft bundle.'
   }
   const locationLabel = scene.world?.location_id ? ` at ${toTitleCase(scene.world.location_id)}` : ''
-  return `Talk to ${scene.npc_name}${locationLabel} and lock in the next reply path.`
+  return `Talk to ${mailboxDisplayName(scene.npc_name)}${locationLabel} and lock in the next reply path.`
 }
 
 type StorySceneEnvelope = Pick<StartSceneResponse, 'scene' | 'trace' | 'done'> | Pick<AdvanceSceneResponse, 'scene' | 'trace' | 'done'>
@@ -83,7 +84,7 @@ export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): Scen
     : [
         {
           id: scene.npc_id,
-          name: scene.npc_name,
+          name: mailboxDisplayName(scene.npc_name),
           email_id: scene.related_email_ids[0] || scene.npc_id,
           position: getPosition(scene),
           opening_line: scene.dialogue,
@@ -123,7 +124,7 @@ export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): Scen
       : undefined,
     npcs: sourceNpcs.map(npc => ({
       id: npc.id,
-      name: npc.name,
+      name: mailboxDisplayName(npc.name),
       emailId:
         npc.related_email_ids.length > 1
           ? `${npc.related_email_ids.length} inbox threads`
