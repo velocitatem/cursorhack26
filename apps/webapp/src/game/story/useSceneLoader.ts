@@ -164,14 +164,11 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
 
   useEffect(() => {
     if (!done || !sessionId || isResolving || drafts.length > 0 || runStage !== 'playing') return
-
-    let cancelled = false
-    const resolve = async () => {
-      const response = await resolveDrafts()
-      if (!cancelled && response?.drafts) setRunStage('review')
-    }
-    void resolve()
-    return () => { cancelled = true }
+    void resolveDrafts().then(response => {
+      if (response?.drafts) {
+        setRunStage('review')
+      }
+    })
   }, [done, drafts.length, isResolving, resolveDrafts, runStage, sessionId])
 
   const sendAllDrafts = useCallback(async (): Promise<SendResponse | null> => {
