@@ -1,22 +1,31 @@
+FROM oven/bun:1 AS webapp-builder
+
+WORKDIR /app/apps/webapp
+
+COPY apps/webapp/package.json ./
+COPY apps/webapp/bun.lock ./
+RUN bun install --frozen-lockfile
+
+COPY apps/webapp/ ./
+RUN bun run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
 ENV PYTHONPATH=/app:/app/apps/backend/fastapi
 
-# System deps - layer rarely changes
 RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies with the real shared library source present.
 COPY pyproject.toml ./
 COPY alveslib/ ./alveslib/
 RUN touch README.md \
     && pip install --no-cache-dir . \
     && rm -f README.md
 
-# Copy application source last - most frequently changed
 COPY apps/backend/fastapi/ ./apps/backend/fastapi/
+COPY --from=webapp-builder /app/apps/webapp/dist/ ./apps/webapp-dist/
 
 RUN useradd --create-home --shell /bin/bash app \
     && chown -R app:app /app

@@ -1,10 +1,13 @@
 from contextlib import asynccontextmanager
 import os
+from pathlib import Path
 
 from alveslib import configure_fastapi_observability, get_logger
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 
@@ -17,6 +20,7 @@ from services.auth.user_repository import AuthRepository
 load_dotenv()
 
 log = get_logger("backend-fastapi")
+WEBAPP_DIST_DIR = Path(__file__).resolve().parents[2] / "webapp-dist"
 
 
 def create_app(
@@ -64,6 +68,23 @@ def create_app(
 
     app.include_router(auth_router)
     app.include_router(story_router)
+
+    if WEBAPP_DIST_DIR.exists():
+        assets_dir = WEBAPP_DIST_DIR / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="webapp-assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_webapp(full_path: str):
+            if full_path.startswith(("auth/", "story/", "health")):
+                return FileResponse(WEBAPP_DIST_DIR / "index.html")
+
+            candidate = (WEBAPP_DIST_DIR / full_path).resolve()
+            if full_path and candidate.is_file() and WEBAPP_DIST_DIR in candidate.parents:
+                return FileResponse(candidate)
+
+            return FileResponse(WEBAPP_DIST_DIR / "index.html")
+
     configure_fastapi_observability(app, service_name="backend-fastapi")
     return app
 

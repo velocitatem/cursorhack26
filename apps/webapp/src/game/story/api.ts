@@ -125,10 +125,16 @@ export class StoryApiClient {
 export const getDefaultStoryApiBaseUrl = () =>
   (() => {
     const configured = import.meta.env.VITE_STORY_API_BASE_URL?.trim()
-    if (import.meta.env.DEV && (!configured || absoluteUrlPattern.test(configured))) {
-      return ''
+    if (configured) {
+      if (import.meta.env.DEV && absoluteUrlPattern.test(configured)) {
+        return ''
+      }
+      return normalizeBaseUrl(configured)
     }
-    return normalizeBaseUrl(configured || 'http://localhost:9812')
+    if (import.meta.env.DEV) {
+      return 'http://localhost:9812'
+    }
+    return ''
   })()
 
 export const resolveStoryAssetUrl = (path: string) => {

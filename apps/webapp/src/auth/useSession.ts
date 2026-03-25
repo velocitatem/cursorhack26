@@ -11,7 +11,37 @@ export type SessionResponse = {
   gmailScopesGranted: boolean
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:9812'
+const resolveApiBaseUrl = () => {
+  const configured = import.meta.env.VITE_API_BASE_URL?.trim()
+  if (configured) {
+    return configured.replace(/\/+$/, '')
+  }
+  if (import.meta.env.DEV) {
+    return 'http://localhost:9812'
+  }
+  return ''
+}
+
+const API_BASE_URL = resolveApiBaseUrl()
+
+const buildPostAuthReturnUrl = () => {
+  const currentUrl = new URL(window.location.href)
+  if (!API_BASE_URL) {
+    return currentUrl.toString()
+  }
+
+  try {
+    const apiUrl = new URL(API_BASE_URL, window.location.origin)
+    if (apiUrl.origin !== currentUrl.origin) {
+      currentUrl.protocol = apiUrl.protocol
+      currentUrl.host = apiUrl.host
+    }
+  } catch {
+    return currentUrl.toString()
+  }
+
+  return currentUrl.toString()
+}
 
 const EMPTY_SESSION: SessionResponse = {
   authenticated: false,
@@ -69,7 +99,7 @@ export function useSession() {
 
   const beginGoogleLogin = useCallback(() => {
     const loginUrl = new URL(`${API_BASE_URL}/auth/google/login`)
-    loginUrl.searchParams.set('return_to', window.location.href)
+    loginUrl.searchParams.set('return_to', buildPostAuthReturnUrl())
     window.location.href = loginUrl.toString()
   }, [])
 
