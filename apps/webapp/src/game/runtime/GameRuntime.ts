@@ -57,7 +57,8 @@ export class GameRuntime {
     const mapSignature = scene.environment.layout
       ? `${scene.environment.theme}:${scene.environment.layout.seed}:${scene.world?.locationId ?? scene.sceneId}`
       : `${scene.environment.theme}`
-    if (this.mapSignature !== mapSignature || !this.mapGroup) {
+    const shouldResetPlayer = this.mapSignature !== mapSignature || !this.mapGroup
+    if (shouldResetPlayer) {
       this.mapGroup?.removeFromParent()
 
       const map = buildDemoMap(scene.environment.theme, scene.environment.layout)
@@ -68,8 +69,10 @@ export class GameRuntime {
       this.world.scene.add(map.group)
     }
 
-    this.player.setPosition(scene.environment.spawn)
-    this.followCamera.syncToTarget(this.player.getFocusPoint(this.playerFocus))
+    if (shouldResetPlayer) {
+      this.player.setPosition(scene.environment.spawn)
+      this.followCamera.syncToTarget(this.player.getFocusPoint(this.playerFocus))
+    }
     this.npcManager.setScene(scene.npcs)
     this.activeNpcId = null
     this.hoveredNpcId = null

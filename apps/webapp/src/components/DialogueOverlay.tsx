@@ -29,6 +29,10 @@ export const DialogueOverlay = ({
   onChoose,
 }: DialogueOverlayProps) => {
   const stateRef = useRef<DialogueState>({ npc, isAdvancing, onClose, onChoose })
+  const dialogueLines = visibleLine
+    .split(/(?<=[.!?])\s+/)
+    .map(line => line.trim())
+    .filter(Boolean)
 
   useLayoutEffect(() => {
     stateRef.current = { npc, isAdvancing, onClose, onChoose }
@@ -82,8 +86,20 @@ export const DialogueOverlay = ({
           </button>
         </div>
 
-        <p className="dialogue-email">Email thread: {npc.emailId}</p>
-        <p className="dialogue-copy">{visibleLine}</p>
+        <div className="dialogue-meta-row">
+          <p className="dialogue-email">Email thread: {npc.emailId}</p>
+          <span className="dialogue-context-chip">Full context loaded</span>
+        </div>
+
+        <div className="dialogue-transcript">
+          {dialogueLines.length
+            ? dialogueLines.map((line, index) => (
+              <p className="dialogue-line" key={`${npc.id}-line-${index}`}>
+                {line}
+              </p>
+            ))
+            : <p className="dialogue-copy">{visibleLine}</p>}
+        </div>
         {audioStatus === 'loading' ? <p className="dialogue-status">Loading voice...</p> : null}
         {audioStatus === 'error' && audioError ? <p className="dialogue-status">{audioError}</p> : null}
 

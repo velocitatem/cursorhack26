@@ -54,8 +54,8 @@ const getTheme = (depth: number, isTerminal: boolean): SceneTheme => {
 const normalizeTheme = (value: string): SceneTheme =>
   value === 'cityBlock' ? 'cityBlock' : 'inboxPlaza'
 
-const getAppearance = (scene: StoryScene): CharacterAppearance => {
-  const index = hash(`${scene.npc_id}:${scene.npc_name}`) % appearancePalette.length
+const getAppearance = (npcId: string, npcName: string): CharacterAppearance => {
+  const index = hash(`${npcId}:${npcName}`) % appearancePalette.length
   return appearancePalette[index]
 }
 
@@ -67,6 +67,9 @@ const getPosition = (scene: StoryScene): SceneVector => {
 const getObjective = (scene: StoryScene, done: boolean) => {
   if (done || scene.is_terminal) {
     return 'Resolve the route and review the final draft bundle.'
+  }
+  if (scene.npcs.length > 1) {
+    return `Talk to each inbox contact and lock in one reply path per email. ${scene.npcs.length} contacts remain.`
   }
   const locationLabel = scene.world?.location_id ? ` at ${toTitleCase(scene.world.location_id)}` : ''
   return `Talk to ${mailboxDisplayName(scene.npc_name)}${locationLabel} and lock in the next reply path.`
@@ -97,7 +100,7 @@ export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): Scen
 
   return {
     sceneId: scene.scene_id,
-    title: isTerminal ? 'Victory Lap' : toTitleCase(scene.scene_id),
+    title: isTerminal ? 'Victory Lap' : scene.npcs.length > 1 ? 'Inbox Plaza' : toTitleCase(scene.scene_id),
     objective: getObjective(scene, isTerminal),
     completionMessage: isTerminal
       ? 'Inbox route locked. Resolve the drafted emails to review the final bundle.'
@@ -139,7 +142,7 @@ export const toScenePayload = ({ scene, trace, done }: StorySceneEnvelope): Scen
         previewReply: toIntentPreview(choice.intent),
         nextSceneId: scene.choice_transitions?.[choice.slug],
       })),
-      appearance: getAppearance(scene),
+      appearance: getAppearance(npc.id, npc.name),
     })),
   }
 }
