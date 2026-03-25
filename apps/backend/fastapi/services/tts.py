@@ -328,6 +328,9 @@ def synthesize_tts_stream(text: str, voice_id: str) -> bytes:
 
 
 def generate_and_cache_scene_tts(session_id: str, scene_id: str, text: str) -> None:
+    existing = get_scene_entry(session_id=session_id, scene_id=scene_id)
+    if existing is not None and existing.status == "ready":
+        return
     entry = set_scene_pending(session_id, scene_id)
     attempted_voice_ids: set[str] = set()
     voice_id = entry.voice_id or _pick_voice_id()

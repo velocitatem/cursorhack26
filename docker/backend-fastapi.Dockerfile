@@ -1,14 +1,3 @@
-FROM oven/bun:1 AS webapp-builder
-
-WORKDIR /app/apps/webapp
-
-COPY apps/webapp/package.json ./
-COPY apps/webapp/bun.lock ./
-RUN bun install --frozen-lockfile
-
-COPY apps/webapp/ ./
-RUN bun run build
-
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -25,7 +14,6 @@ RUN touch README.md \
     && rm -f README.md
 
 COPY apps/backend/fastapi/ ./apps/backend/fastapi/
-COPY --from=webapp-builder /app/apps/webapp/dist/ ./apps/webapp-dist/
 
 RUN useradd --create-home --shell /bin/bash app \
     && chown -R app:app /app

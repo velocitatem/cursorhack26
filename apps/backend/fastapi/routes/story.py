@@ -223,6 +223,7 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
             else:
                 preload_scene = await _build_scene_async(session.emails, trace)
             _attach_scene_tts(session_id=session_id, scene=preload_scene)
+            _start_scene_tts_generation(session_id=session_id, scene=preload_scene)
             preload_results[choice.slug] = preload_scene
         except Exception:
             log.warning(
@@ -301,7 +302,7 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
         "start_scene session_id=%s email_count=%s scene_id=%s terminal=%s",
         session_id, len(emails), first_scene.scene_id, first_scene.is_terminal,
     )
-    _start_scene_tts_generation(session_id=session_id, scene=first_scene)
+    await _generate_scene_tts_task(session_id=session_id, scene=first_scene)
     asyncio.create_task(_preload_next(session_id, session, first_scene))
     return StartSceneResponse(session_id=session_id, scene=first_scene, trace=[], done=first_scene.is_terminal)
 

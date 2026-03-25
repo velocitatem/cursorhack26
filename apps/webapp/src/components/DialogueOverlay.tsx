@@ -84,7 +84,7 @@ export const DialogueOverlay = ({
 
         <p className="dialogue-email">Email thread: {npc.emailId}</p>
         <p className="dialogue-copy">{visibleLine}</p>
-        {audioStatus === 'loading' ? <p className="dialogue-status">Voice warming up...</p> : null}
+        {audioStatus === 'loading' ? <p className="dialogue-status">Loading voice...</p> : null}
         {audioStatus === 'error' && audioError ? <p className="dialogue-status">{audioError}</p> : null}
 
         {npc.choices.length ? (

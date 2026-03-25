@@ -5,7 +5,6 @@ import type { SceneNpc } from './types'
 export type DialogueAudioStatus = 'idle' | 'loading' | 'playing' | 'error'
 
 const defaultRetryAfterMs = 1000
-const maxPendingWaitMs = 12000
 
 const getResponseDetail = async (response: Response) => {
   const text = await response.text()
@@ -45,13 +44,9 @@ const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === 'AbortError'
 
 const fetchReadyAudioBlob = async (url: string, signal: AbortSignal) => {
-  const startedAt = Date.now()
   while (true) {
     const response = await fetch(url, { method: 'GET', signal })
     if (response.status === 202) {
-      if (Date.now() - startedAt >= maxPendingWaitMs) {
-        throw new Error('NPC voice is still warming up.')
-      }
       await wait(parseRetryAfterMs(response.headers.get('Retry-After')), signal)
       continue
     }
