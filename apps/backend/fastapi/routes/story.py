@@ -162,7 +162,6 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
             preload_scene = await _build_scene_async(session.emails, trace)
             _attach_scene_tts(session_id=session_id, scene=preload_scene)
             preload_results[choice.slug] = preload_scene
-            _start_scene_tts_generation(session_id=session_id, scene=preload_scene)
         except Exception:
             log.warning(
                 "preload_scene_failed scene_id=%s choice_slug=%s",
