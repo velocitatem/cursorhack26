@@ -10,10 +10,37 @@ export type WorldBounds = {
 
 export class VoxelTerrain {
   readonly group = new THREE.Group()
-  private readonly blockGeometry = new THREE.BoxGeometry(1, 1, 1)
+  private readonly geometryCache = new Map<string, THREE.BoxGeometry>()
+
+  private getGeometry(width: number, height: number, depth: number) {
+    const key = `${width}:${height}:${depth}`
+    let geometry = this.geometryCache.get(key)
+    if (!geometry) {
+      geometry = new THREE.BoxGeometry(width, height, depth)
+      this.geometryCache.set(key, geometry)
+    }
+    return geometry
+  }
 
   addBlock(x: number, y: number, z: number, type: VoxelMaterialType) {
-    const mesh = new THREE.Mesh(this.blockGeometry, getVoxelMaterial(type))
+    const mesh = new THREE.Mesh(this.getGeometry(1, 1, 1), getVoxelMaterial(type))
+    mesh.position.set(x, y, z)
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    this.group.add(mesh)
+    return mesh
+  }
+
+  addBox(
+    x: number,
+    y: number,
+    z: number,
+    width: number,
+    height: number,
+    depth: number,
+    type: VoxelMaterialType,
+  ) {
+    const mesh = new THREE.Mesh(this.getGeometry(width, height, depth), getVoxelMaterial(type))
     mesh.position.set(x, y, z)
     mesh.castShadow = true
     mesh.receiveShadow = true
