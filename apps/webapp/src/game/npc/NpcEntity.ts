@@ -25,7 +25,7 @@ const createInteractHint = () => {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = '#cce6ff'
-  ctx.fillText('Press E to talk', canvas.width / 2, canvas.height / 2)
+  ctx.fillText('Talk', canvas.width / 2, canvas.height / 2)
 
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace

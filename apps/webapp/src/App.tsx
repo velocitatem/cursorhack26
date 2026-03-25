@@ -1,9 +1,11 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { AuthGate } from './auth/AuthGate'
 import { useSession } from './auth/useSession'
 import { DialogueOverlay } from './components/DialogueOverlay'
+import { MobileControls } from './components/MobileControls'
 import { WorldCanvas } from './components/WorldCanvas'
+import type { GameRuntimeControls } from './game/runtime/useGameRuntime'
 import { useDialogueAudio } from './game/story/useDialogueAudio'
 import { useDialogueState } from './game/story/useDialogueState'
 import { useSceneLoader } from './game/story/useSceneLoader'
@@ -22,6 +24,32 @@ const toReadableLabel = (value: string) =>
     .filter(Boolean)
     .map(part => part[0]?.toUpperCase() + part.slice(1))
     .join(' ')
+
+function useCoarsePointer() {
+  const [isCoarsePointer, setIsCoarsePointer] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(pointer: coarse)').matches : false,
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const query = window.matchMedia('(pointer: coarse)')
+    const update = () => setIsCoarsePointer(query.matches)
+
+    update()
+    if (typeof query.addEventListener === 'function') {
+      query.addEventListener('change', update)
+      return () => query.removeEventListener('change', update)
+    }
+
+    query.addListener(update)
+    return () => query.removeListener(update)
+  }, [])
+
+  return isCoarsePointer
+}
 
 function PreludeOverlay({
   userLabel,
@@ -383,11 +411,17 @@ function GameShell({
       currentTime: dialogueAudioCurrentTime,
       duration: dialogueAudioDuration,
     })
+  const [runtimeControls, setRuntimeControls] = useState<GameRuntimeControls | null>(null)
+  const [interactionTarget, setInteractionTarget] = useState<SceneNpc | null>(null)
+  const [hudCollapsed, setHudCollapsed] = useState(true)
+  const isCoarsePointer = useCoarsePointer()
 
   const isBusy = isStarting || isAdvancing || isResolving || runStage === 'sending'
   const showWorld = !isPreviewVisible
   const showHud = runStage === 'playing'
   const showFinale = isResolving || runStage === 'review' || runStage === 'sending' || runStage === 'sent'
+  const showMobileControls = showWorld && showHud && !isOpen && !isBusy && isCoarsePointer
+  const canInteract = Boolean(interactionTarget) && !isBusy && !isOpen
   const previewStage = runStage === 'generating' ? 'generating' : 'previewing'
   const finaleStage: 'review' | 'sending' | 'sent' =
     runStage === 'sending' || runStage === 'sent' ? runStage : 'review'
@@ -395,6 +429,12 @@ function GameShell({
   useEffect(() => {
     stopDialogueAudio()
   }, [scene.sceneId, stopDialogueAudio])
+
+  useEffect(() => {
+    if (!showMobileControls) {
+      runtimeControls?.clearMoveInput()
+    }
+  }, [runtimeControls, showMobileControls])
 
   const handleNpcInteract = useCallback(
     (npc: SceneNpc) => {
@@ -443,6 +483,28 @@ function GameShell({
     },
     [sendDraft],
   )
+  const handleRuntimeReady = useCallback((controls: GameRuntimeControls | null) => {
+    setRuntimeControls(controls)
+  }, [])
+  const handleInteractionTargetChange = useCallback((npc: SceneNpc | null) => {
+    setInteractionTarget(npc)
+  }, [])
+  const handleMobileMove = useCallback(
+    (x: number, y: number) => {
+      runtimeControls?.setMoveInput(x, y)
+    },
+    [runtimeControls],
+  )
+  const handleMobileMoveEnd = useCallback(() => {
+    runtimeControls?.clearMoveInput()
+  }, [runtimeControls])
+  const handleMobileInteract = useCallback(() => {
+    runtimeControls?.interact()
+  }, [runtimeControls])
+  const interactionHint = isCoarsePointer
+    ? 'Walk up to the active NPC and tap Talk to lock in a route.'
+    : 'Walk up to the active NPC and press `E` to lock in a route.'
+  const interactionLabel = interactionTarget ? `Talk to ${interactionTarget.name}` : 'Move closer'
 
   return (
     <main className={`app-shell app-shell-${runStage}`}>
@@ -461,6 +523,8 @@ function GameShell({
           scene={scene}
           dialogueOpen={isOpen || showFinale}
           activeNpcId={activeNpcId}
+          onControlsReady={handleRuntimeReady}
+          onInteractionTargetChange={handleInteractionTargetChange}
           onNpcInteract={handleNpcInteract}
         />
       ) : (
@@ -468,43 +532,63 @@ function GameShell({
       )}
 
       {showHud ? (
-        <section className="story-hud">
-          <div className="story-status-card">
+        <section className={`story-hud ${hudCollapsed && isCoarsePointer ? 'story-hud--collapsed' : ''}`}>
+          <div
+            className="story-status-card"
+            onClick={isCoarsePointer ? () => setHudCollapsed(c => !c) : undefined}
+          >
             <p className="eyebrow">Story route</p>
-            <h1 className="story-title">{scene.title}</h1>
-            <p className="story-objective">{scene.objective}</p>
+            {!(hudCollapsed && isCoarsePointer) ? (
+              <>
+                <h1 className="story-title">{scene.title}</h1>
+                <p className="story-objective">{scene.objective}</p>
 
-            <div className="story-meta">
-              <span>Mode: {mode}</span>
-              <span>Choices locked: {trace.length}</span>
-              <span>
-                {scene.world
-                  ? `Location: ${scene.world.locationId} (${scene.world.visitedLocationIds.length} visited)`
-                  : 'Location: bootstrap'}
-              </span>
-              <span>{scene.world ? `Planner: ${scene.world.plannerSource}` : 'Planner: pending'}</span>
-              <span>{scene.world ? `Seed: ${scene.world.runSeed}` : 'Seed: -'}</span>
-              <span>{sessionId ? 'Session live' : 'No session yet'}</span>
-            </div>
+                <div className="story-meta">
+                  <span>Mode: {mode}</span>
+                  <span>Choices locked: {trace.length}</span>
+                  <span>
+                    {scene.world
+                      ? `Location: ${scene.world.locationId} (${scene.world.visitedLocationIds.length} visited)`
+                      : 'Location: bootstrap'}
+                  </span>
+                  <span>{scene.world ? `Planner: ${scene.world.plannerSource}` : 'Planner: pending'}</span>
+                  <span>{scene.world ? `Seed: ${scene.world.runSeed}` : 'Seed: -'}</span>
+                  <span>{sessionId ? 'Session live' : 'No session yet'}</span>
+                </div>
 
-            {scene.completionMessage ? (
-              <p className="story-completion">{scene.completionMessage}</p>
-            ) : null}
+                {scene.completionMessage ? (
+                  <p className="story-completion">{scene.completionMessage}</p>
+                ) : null}
 
-            {error ? <p className="story-error">{error}</p> : null}
+                {error ? <p className="story-error">{error}</p> : null}
 
-            <div className="story-actions">
-              <button className="hud-button" onClick={handleRestart} type="button" disabled={isBusy}>
-                Restart run
-              </button>
-            </div>
+                <div className="story-actions">
+                  <button className="hud-button" onClick={(e) => { e.stopPropagation(); handleRestart(); }} type="button" disabled={isBusy}>
+                    Restart run
+                  </button>
+                </div>
 
-            {isAdvancing ? <p className="story-note">Locking in the next branch.</p> : null}
-            {!done && !isAdvancing ? (
-              <p className="story-note">Walk up to the active NPC and press `E` to lock in a route.</p>
-            ) : null}
+                {isAdvancing ? <p className="story-note">Locking in the next branch.</p> : null}
+                {!done && !isAdvancing ? (
+                  <p className="story-note">{interactionHint}</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="story-collapsed-hint">Tap to expand</p>
+            )}
           </div>
         </section>
+      ) : null}
+
+      {showMobileControls ? (
+        <MobileControls
+          canInteract={canInteract}
+          disabled={!runtimeControls}
+          interactLabel={interactionLabel}
+          onInteract={handleMobileInteract}
+          onMoveEnd={handleMobileMoveEnd}
+          onMoveInput={handleMobileMove}
+        />
       ) : null}
 
       {isPreviewVisible ? (
