@@ -64,7 +64,7 @@ export class StoryApiClient {
     return parse(payload)
   }
 
-  async start(request: StartSceneRequest = {}): Promise<StartSceneResponse> {
+  async start(request: StartSceneRequest): Promise<StartSceneResponse> {
     const body = startSceneRequestSchema.parse(request)
     return this.request(
       '/story/scene/start',
@@ -86,7 +86,7 @@ export class StoryApiClient {
     )
   }
 
-  async preview(request: StartSceneRequest = {}): Promise<InboxPreviewResponse> {
+  async preview(request: StartSceneRequest): Promise<InboxPreviewResponse> {
     const body = startSceneRequestSchema.parse(request)
     return this.request(
       '/story/scene/preview',

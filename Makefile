@@ -19,7 +19,7 @@ NX         := $(BUN) x nx
 
 init: bootstrap ## First-time setup (alias for bootstrap)
 
-dev: run.webapp ## Start the Next.js webapp (fastest entry point)
+dev: run.webapp ## Start the Vite webapp (fastest entry point)
 
 ## ── Environment Setup ────────────────────────────────────────────────────────
 
@@ -95,8 +95,8 @@ lift: up ## Alias for 'up'
 
 ## ── Run Applications ─────────────────────────────────────────────────────────
 
-run.webapp: ## Start Next.js webapp with bun (dev + turbopack)
-	@echo "Starting webapp at http://localhost:3000"
+run.webapp: ## Start Vite webapp with Bun
+	@echo "Starting webapp at http://localhost:5173"
 	@$(NX) run webapp:dev
 
 run.webapp.simple: ## Start Streamlit minimal webapp
@@ -157,7 +157,7 @@ help: ## Show this help
 	@echo ""
 	@echo "  Quick start:"
 	@echo "    make init         - First-time setup"
-	@echo "    make dev          - Start Next.js webapp"
+	@echo "    make dev          - Start webapp"
 	@echo "    make up           - Start local backend services"
 	@echo ""
 	@grep -E '^[a-zA-Z_.%-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

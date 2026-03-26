@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from email.utils import parseaddr
 from io import BytesIO
 import logging
+import os
 import re
 from uuid import uuid4
 
@@ -39,6 +40,7 @@ from services.world_planner import _simple_layout
 from services.tts import (
     SceneTTSCacheEntry,
     ensure_scene_entry,
+    ensure_speaker_entry,
     generate_and_cache_scene_tts,
     get_scene_entry,
     scene_tts_url,
@@ -50,13 +52,6 @@ log = logging.getLogger(__name__)
 PENDING_TTS_WAIT_SECONDS = 0.5
 PENDING_TTS_POLL_SECONDS = 0.05
 SHARED_WORLD_LOCATION_ID = "hub"
-HUB_NPC_NAME_ROSTER = [
-    "Alberto",
-    "Daniel Kong",
-    "Paul Ruiz",
-    "Sebas",
-    "Daniel Rosel",
-]
 
 
 @dataclass
@@ -65,9 +60,9 @@ class StorySession:
     trace: list[TraceStep] = field(default_factory=list)
     current_scene: Scene | None = None
     preloaded_by_choice: dict[str, Scene] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    user_id: str = "demo-user"
+    user_id: str = ""
     resolved_drafts: list[EmailDraft] = field(default_factory=list)
     world_id: str = ""
     current_location_id: str = ""
@@ -84,12 +79,30 @@ SESSIONS: dict[str, StorySession] = {}
 def _default_reply_choices():
     return [
         {"slug": "reply_now", "label": "Reply now", "intent": "agree_immediately"},
-        {"slug": "send_polished_reply", "label": "Send polished reply", "intent": "confident_response"},
+        {
+            "slug": "send_polished_reply",
+            "label": "Send polished reply",
+            "intent": "confident_response",
+        },
         {"slug": "defer", "label": "Defer politely", "intent": "ask_for_more_time"},
     ]
 
 
-def _sanitize_choices(choices: list[SceneChoice]) -> list[SceneChoice]:
+DEFAULT_REPLY_CHOICE_SLUGS = {choice["slug"] for choice in _default_reply_choices()}
+
+
+def _world_hub_mode_enabled() -> bool:
+    return os.getenv("STORY_WORLD_HUB_MODE", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _sanitize_choices(
+    choices: list[SceneChoice], *, add_defaults: bool = True
+) -> list[SceneChoice]:
     sanitized: list[SceneChoice] = []
     for choice in choices:
         choice_key = f"{choice.slug} {choice.label} {choice.intent}".lower()
@@ -97,10 +110,16 @@ def _sanitize_choices(choices: list[SceneChoice]) -> list[SceneChoice]:
             continue
         sanitized.append(choice)
 
-    if len(sanitized) >= 2:
-        return sanitized[:3]
+    sanitized = sanitized[:3]
+    if not add_defaults:
+        return sanitized
 
-    fallback = [SceneChoice.model_validate(choice) for choice in _default_reply_choices()]
+    if len(sanitized) >= 2:
+        return sanitized
+
+    fallback = [
+        SceneChoice.model_validate(choice) for choice in _default_reply_choices()
+    ]
     existing_slugs = {choice.slug for choice in sanitized}
     for choice in fallback:
         if choice.slug not in existing_slugs:
@@ -120,10 +139,15 @@ def _shared_world_positions():
     ]
 
 
-def _hub_npc_name_for_index(fallback_index: int, email: EmailItem) -> str:
-    if 0 <= fallback_index < len(HUB_NPC_NAME_ROSTER):
-        return HUB_NPC_NAME_ROSTER[fallback_index]
-    return _display_name_for_email(email)
+def _default_hub_position(fallback_index: int) -> SceneVector:
+    position = _shared_world_positions()[
+        fallback_index % len(_shared_world_positions())
+    ]
+    return SceneVector(**position)
+
+
+def _clean_sentence(value: str) -> str:
+    return " ".join((value or "").split()).strip()
 
 
 def _sender_display_name(sender: str) -> str:
@@ -136,7 +160,11 @@ def _sender_display_name(sender: str) -> str:
 
 
 def _extract_person_name(email: EmailItem) -> str | None:
-    combined = " ".join(part for part in [email.subject or "", email.snippet or "", email.body or ""] if part)
+    combined = " ".join(
+        part
+        for part in [email.subject or "", email.snippet or "", email.body or ""]
+        if part
+    )
     patterns = [
         r"\b(?:hi[, ]+)?i\s+am\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
         r"\b(?:hi[, ]+)?i'm\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
@@ -155,7 +183,9 @@ def _display_name_for_email(email: EmailItem) -> str:
     return _extract_person_name(email) or _sender_display_name(email.sender)
 
 
-def _sender_first_name(sender: str, email: EmailItem | None = None, display_name: str | None = None) -> str:
+def _sender_first_name(
+    sender: str, email: EmailItem | None = None, display_name: str | None = None
+) -> str:
     if display_name:
         return display_name.split()[0]
     if email is not None:
@@ -279,16 +309,41 @@ def _build_npc_opening_line(email: EmailItem, display_name: str | None = None) -
                 (
                     _rewrite_to_first_person(sentence, email.sender)
                     for sentence in _sentences(combined)
-                    if any(keyword in sentence.lower() for keyword in ["project", "stud", "graduat", "gpa", "grade", "react", "vue", "javascript", "internship", "skill", "stack"])
+                    if any(
+                        keyword in sentence.lower()
+                        for keyword in [
+                            "project",
+                            "stud",
+                            "graduat",
+                            "gpa",
+                            "grade",
+                            "react",
+                            "vue",
+                            "javascript",
+                            "internship",
+                            "skill",
+                            "stack",
+                        ]
+                    )
                 ),
                 "",
             )
-            second_sentence = fact_sentence or "I’d love to walk you through my background, strongest work, and why I’m a strong fit."
+            second_sentence = (
+                fact_sentence
+                or "I’d love to walk you through my background, strongest work, and why I’m a strong fit."
+            )
         if not second_sentence.endswith("."):
             second_sentence = f"{second_sentence}."
         return f"Hi, I'm {first_name}. I'm applying for the {role}. {second_sentence}"
 
-    first_fact = next((_rewrite_to_first_person(sentence, email.sender) for sentence in _sentences(combined) if sentence), "")
+    first_fact = next(
+        (
+            _rewrite_to_first_person(sentence, email.sender)
+            for sentence in _sentences(combined)
+            if sentence
+        ),
+        "",
+    )
     if not first_fact:
         first_fact = "I wanted to talk through what I need from you today."
     if not first_fact.endswith("."):
@@ -302,24 +357,68 @@ def _build_hub_npc(
     planner_npc: SceneNpc | None = None,
     planner_scene: Scene | None = None,
 ) -> SceneNpc:
-    choices = planner_npc.choices if planner_npc and planner_npc.choices else planner_scene.choices if planner_scene and planner_scene.choices else []
+    choices = (
+        planner_npc.choices
+        if planner_npc and planner_npc.choices
+        else planner_scene.choices
+        if planner_scene and planner_scene.choices
+        else []
+    )
     if not choices:
-        choices = [SceneChoice.model_validate(choice) for choice in _default_reply_choices()]
+        choices = [
+            SceneChoice.model_validate(choice) for choice in _default_reply_choices()
+        ]
     choices = _sanitize_choices([choice.model_copy(deep=True) for choice in choices])
-    position = _shared_world_positions()[fallback_index % len(_shared_world_positions())]
-    display_name = _hub_npc_name_for_index(fallback_index, email)
+
+    use_planner_identity = bool(
+        planner_npc
+        and (
+            planner_scene is None
+            or bool(planner_scene.npcs)
+            or len(planner_scene.related_email_ids) <= 1
+        )
+    )
+
+    display_name = (
+        _clean_sentence(planner_npc.name)
+        if use_planner_identity and planner_npc and planner_npc.name
+        else ""
+    )
+    if not display_name and planner_scene and len(planner_scene.related_email_ids) <= 1:
+        display_name = _clean_sentence(planner_scene.npc_name)
+    if not display_name:
+        display_name = _display_name_for_email(email)
+
+    opening_line = (
+        _clean_sentence(planner_npc.opening_line)
+        if use_planner_identity and planner_npc
+        else ""
+    )
+    if not opening_line and planner_scene and len(planner_scene.related_email_ids) <= 1:
+        opening_line = _clean_sentence(planner_scene.dialogue)
+    if not opening_line:
+        opening_line = _build_npc_opening_line(email, display_name)
+
+    position = (
+        planner_npc.position.model_copy(deep=True)
+        if use_planner_identity and planner_npc
+        else _default_hub_position(fallback_index)
+    )
+
     return SceneNpc(
         id=email.id,
         name=display_name,
         email_id=email.id,
-        position=SceneVector(**position),
-        opening_line=_build_npc_opening_line(email, display_name),
+        position=position,
+        opening_line=opening_line,
         choices=choices,
         related_email_ids=[email.id],
     )
 
 
-def _build_shared_world_scene(plan_build: WorldPlanBuild, emails: list[EmailItem]) -> Scene:
+def _build_shared_world_scene(
+    plan_build: WorldPlanBuild, emails: list[EmailItem]
+) -> Scene:
     locations = plan_build.plan.locations
     if not locations:
         return Scene(
@@ -338,7 +437,11 @@ def _build_shared_world_scene(plan_build: WorldPlanBuild, emails: list[EmailItem
             for npc in location.scene.npcs:
                 planner_npcs_by_email_id.setdefault(npc.email_id, (npc, location.scene))
         else:
-            source_email_id = location.scene.related_email_ids[0] if location.scene.related_email_ids else location.scene.npc_id
+            source_email_id = (
+                location.scene.related_email_ids[0]
+                if location.scene.related_email_ids
+                else location.scene.npc_id
+            )
             planner_npcs_by_email_id.setdefault(
                 source_email_id,
                 (
@@ -357,7 +460,9 @@ def _build_shared_world_scene(plan_build: WorldPlanBuild, emails: list[EmailItem
 
     npcs = []
     for idx, email in enumerate(emails[:5]):
-        planner_npc, planner_scene = planner_npcs_by_email_id.get(email.id, (None, None))
+        planner_npc, planner_scene = planner_npcs_by_email_id.get(
+            email.id, (None, None)
+        )
         npcs.append(_build_hub_npc(email, idx, planner_npc, planner_scene))
     if not npcs:
         return base_scene
@@ -379,7 +484,9 @@ def _build_shared_world_scene(plan_build: WorldPlanBuild, emails: list[EmailItem
     )
 
 
-def _build_shared_world_next_scene(current_scene: Scene, remaining_npcs: list[SceneNpc], session: StorySession) -> Scene:
+def _build_shared_world_next_scene(
+    current_scene: Scene, remaining_npcs: list[SceneNpc], session: StorySession
+) -> Scene:
     if not remaining_npcs:
         return current_scene.model_copy(
             update={
@@ -413,23 +520,81 @@ def _build_shared_world_next_scene(current_scene: Scene, remaining_npcs: list[Sc
     )
 
 
-def _mock_emails() -> list[EmailItem]:
-    return [
-        EmailItem(
-            id="email-1",
-            sender="manager@company.com",
-            subject="Need status update by EOD",
-            snippet="Can you send a short status update before 5pm?",
-            body="Hi, just checking in — could you send me a brief status update on the project before end of day? Thanks.",
-        ),
-        EmailItem(
-            id="email-2",
-            sender="client@startup.io",
-            subject="Follow-up on proposal",
-            snippet="Could you clarify timeline and pricing details?",
-            body="Hey, following up on the proposal we discussed. Could you clarify the expected timeline and break down the pricing a bit more? We're keen to move forward.",
-        ),
+def _should_fill_choices_from_tree(choices: list[SceneChoice]) -> bool:
+    if not choices:
+        return True
+    slugs = {choice.slug for choice in choices}
+    return bool(slugs) and slugs.issubset(DEFAULT_REPLY_CHOICE_SLUGS)
+
+
+async def _fill_hub_choices_from_tree(scene: Scene, emails: list[EmailItem]) -> Scene:
+    if not scene.npcs:
+        return scene
+
+    email_by_id = {email.id: email for email in emails}
+    target_email_ids: list[str] = []
+    for npc in scene.npcs:
+        if npc.email_id not in email_by_id:
+            continue
+        if _should_fill_choices_from_tree(npc.choices):
+            target_email_ids.append(npc.email_id)
+
+    target_email_ids = list(dict.fromkeys(target_email_ids))
+    if not target_email_ids:
+        return scene
+
+    generated_by_email_id: dict[str, Scene] = {}
+    tasks = [
+        _build_scene_async([email_by_id[email_id]], []) for email_id in target_email_ids
     ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for email_id, result in zip(target_email_ids, results, strict=False):
+        if isinstance(result, Exception):
+            log.warning(
+                "tree_choice_generation_failed email_id=%s",
+                email_id,
+                exc_info=result,
+            )
+            continue
+        generated_by_email_id[email_id] = result
+
+    if not generated_by_email_id:
+        return scene
+
+    updated_npcs: list[SceneNpc] = []
+    for npc in scene.npcs:
+        generated = generated_by_email_id.get(npc.email_id)
+        if generated is None:
+            updated_npcs.append(npc)
+            continue
+
+        generated_choices = _sanitize_choices(
+            [choice.model_copy(deep=True) for choice in generated.choices],
+            add_defaults=False,
+        )
+        updates: dict[str, object] = {}
+        if generated_choices:
+            updates["choices"] = generated_choices
+        generated_dialogue = _clean_sentence(generated.dialogue)
+        if generated_dialogue:
+            updates["opening_line"] = generated_dialogue
+
+        updated_npcs.append(
+            npc.model_copy(update=updates, deep=True) if updates else npc
+        )
+
+    primary = updated_npcs[0]
+    return scene.model_copy(
+        update={
+            "npc_id": primary.id,
+            "npc_name": primary.name,
+            "dialogue": primary.opening_line,
+            "choices": primary.choices,
+            "related_email_ids": [npc.email_id for npc in updated_npcs],
+            "npcs": updated_npcs,
+        },
+        deep=True,
+    )
 
 
 async def _load_emails_with_source(
@@ -439,27 +604,47 @@ async def _load_emails_with_source(
     if body.inbox_override is not None:
         return body.inbox_override, "override"
 
-    token = None
-    if repo is not None:
-        try:
-            token = await asyncio.to_thread(repo.get_google_credentials_for_user, body.user_id)
-        except Exception:
-            log.info("gmail_inbox_token_lookup_failed user_id=%s", body.user_id)
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Auth repository is unavailable.",
+        )
 
-    if token:
-        try:
-            emails, _ = await list_todays_emails(token)
-            if emails:
-                log.info("gmail_inbox_loaded user_id=%s count=%s", body.user_id, len(emails))
-                return emails, "gmail"
-        except GmailServiceError:
-            log.warning("gmail_inbox_load_failed user_id=%s", body.user_id, exc_info=True)
+    try:
+        token = await asyncio.to_thread(
+            repo.get_google_credentials_for_user, body.user_id
+        )
+    except Exception as exc:
+        log.warning(
+            "gmail_inbox_token_lookup_failed user_id=%s", body.user_id, exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to load Google credentials.",
+        ) from exc
 
-    log.info("gmail_inbox_fallback_mock user_id=%s", body.user_id)
-    return _mock_emails(), "mock"
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No Google credentials for this user. Authenticate first.",
+        )
+
+    try:
+        emails, _ = await list_todays_emails(token)
+    except GmailServiceError as exc:
+        log.warning("gmail_inbox_load_failed user_id=%s", body.user_id, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to load Gmail inbox: {exc}",
+        ) from exc
+
+    log.info("gmail_inbox_loaded user_id=%s count=%s", body.user_id, len(emails))
+    return emails, "gmail"
 
 
-async def _load_emails(body: StartSceneRequest, repo: AuthRepository | None) -> list[EmailItem]:
+async def _load_emails(
+    body: StartSceneRequest, repo: AuthRepository | None
+) -> list[EmailItem]:
     emails, _ = await _load_emails_with_source(body, repo)
     return emails
 
@@ -468,12 +653,16 @@ async def _build_scene_async(emails: list[EmailItem], trace: list[TraceStep]) ->
     return await asyncio.to_thread(build_scene, emails, trace)
 
 
-async def _build_world_plan_async(emails: list[EmailItem], user_id: str) -> WorldPlanBuild:
+async def _build_world_plan_async(
+    emails: list[EmailItem], user_id: str
+) -> WorldPlanBuild:
     run_seed = int(uuid4().int % 1_000_000_000)
     return await asyncio.to_thread(build_world_plan, emails, user_id, 5, run_seed)
 
 
-def _scene_with_world_state(session: StorySession, scene: Scene, location_id: str) -> Scene:
+def _scene_with_world_state(
+    session: StorySession, scene: Scene, location_id: str
+) -> Scene:
     hydrated = scene.model_copy(deep=True)
     hydrated.choice_transitions = session.world_transitions.get(location_id, {})
     if not hydrated.is_terminal and not hydrated.choices:
@@ -481,20 +670,27 @@ def _scene_with_world_state(session: StorySession, scene: Scene, location_id: st
             hydrated.choices = [
                 SceneChoice(
                     slug=slug,
-                    label=slug.replace("_", " ").replace("-", " ").strip().title() or "Continue",
+                    label=slug.replace("_", " ").replace("-", " ").strip().title()
+                    or "Continue",
                     intent="neutral",
                 )
                 for slug in hydrated.choice_transitions
             ]
         else:
-            fallback_target = next((loc for loc in session.world_locations if loc != location_id), location_id)
-            fallback_choices = [
-                SceneChoice(slug="reply_now", label="Reply now", intent="agree_immediately"),
-                SceneChoice(slug="ask_context", label="Ask for context", intent="ask_for_clarification"),
-                SceneChoice(slug="defer", label="Defer politely", intent="ask_for_more_time"),
-            ]
+            fallback_target = next(
+                (loc for loc in session.world_locations if loc != location_id),
+                location_id,
+            )
+            fallback_choices = _sanitize_choices(
+                [
+                    SceneChoice.model_validate(choice)
+                    for choice in _default_reply_choices()
+                ]
+            )
             hydrated.choices = fallback_choices
-            hydrated.choice_transitions = {choice.slug: fallback_target for choice in fallback_choices}
+            hydrated.choice_transitions = {
+                choice.slug: fallback_target for choice in fallback_choices
+            }
             session.world_transitions[location_id] = hydrated.choice_transitions
     hydrated.world = SceneWorldState(
         world_id=session.world_id or "legacy-world",
@@ -504,10 +700,20 @@ def _scene_with_world_state(session: StorySession, scene: Scene, location_id: st
         run_seed=session.run_seed,
     )
     if hydrated.environment and hydrated.environment.layout is None:
-        loc_idx = list(session.world_locations.keys()).index(location_id) if location_id in session.world_locations else 0
-        hydrated.environment.layout = _simple_layout(seed=session.run_seed or 0, location_idx=loc_idx)
+        loc_idx = (
+            list(session.world_locations.keys()).index(location_id)
+            if location_id in session.world_locations
+            else 0
+        )
+        hydrated.environment.layout = _simple_layout(
+            seed=session.run_seed or 0, location_idx=loc_idx
+        )
     if not hydrated.npcs:
-        primary_email_id = hydrated.related_email_ids[0] if hydrated.related_email_ids else (hydrated.npc_id or "email")
+        primary_email_id = (
+            hydrated.related_email_ids[0]
+            if hydrated.related_email_ids
+            else (hydrated.npc_id or "email")
+        )
         hydrated.npcs = [
             SceneNpc(
                 id=hydrated.npc_id or primary_email_id,
@@ -533,19 +739,50 @@ def _scene_with_world_state(session: StorySession, scene: Scene, location_id: st
     return hydrated
 
 
-async def _wait_for_ready_scene_tts(session_id: str, scene_id: str) -> SceneTTSCacheEntry | None:
+async def _wait_for_ready_scene_tts(
+    session_id: str, scene_id: str
+) -> SceneTTSCacheEntry | None:
     deadline = asyncio.get_running_loop().time() + PENDING_TTS_WAIT_SECONDS
     entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
-    while entry is not None and entry.status == "pending" and asyncio.get_running_loop().time() < deadline:
+    while (
+        entry is not None
+        and entry.status == "pending"
+        and asyncio.get_running_loop().time() < deadline
+    ):
         await asyncio.sleep(PENDING_TTS_POLL_SECONDS)
         entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
     return entry
+
+
+def _npc_tts_cache_id(scene_id: str, npc_id: str) -> str:
+    return f"{scene_id}::npc::{npc_id}"
+
+
+def _npc_tts_url(session_id: str, scene_id: str, npc_id: str) -> str:
+    return f"/story/scene/{session_id}/{scene_id}/npc/{npc_id}/tts"
+
+
+def _npc_voice_key(npc: SceneNpc) -> str:
+    return npc.email_id or npc.id
+
+
+def _attach_npc_tts(session_id: str, scene_id: str, npc: SceneNpc) -> SceneNpc:
+    entry = ensure_speaker_entry(
+        session_id=session_id,
+        scene_id=_npc_tts_cache_id(scene_id=scene_id, npc_id=npc.id),
+        voice_key=_npc_voice_key(npc),
+    )
+    npc.tts = _npc_tts_url(session_id=session_id, scene_id=scene_id, npc_id=npc.id)
+    npc.voice_id = entry.voice_id
+    return npc
 
 
 def _attach_scene_tts(session_id: str, scene: Scene) -> Scene:
     entry = ensure_scene_entry(session_id=session_id, scene_id=scene.scene_id)
     scene.tts = scene_tts_url(session_id=session_id, scene_id=scene.scene_id)
     scene.voice_id = entry.voice_id
+    for npc in scene.npcs:
+        _attach_npc_tts(session_id=session_id, scene_id=scene.scene_id, npc=npc)
     return scene
 
 
@@ -566,17 +803,54 @@ async def _generate_scene_tts_task(session_id: str, scene: Scene) -> None:
         )
 
 
+async def _generate_npc_tts_task(session_id: str, scene_id: str, npc: SceneNpc) -> None:
+    try:
+        await asyncio.to_thread(
+            generate_and_cache_scene_tts,
+            session_id,
+            _npc_tts_cache_id(scene_id=scene_id, npc_id=npc.id),
+            npc.opening_line,
+            _npc_voice_key(npc),
+        )
+    except Exception:
+        log.warning(
+            "npc_tts_generation_failed session_id=%s scene_id=%s npc_id=%s",
+            session_id,
+            scene_id,
+            npc.id,
+            exc_info=True,
+        )
+
+
 def _start_scene_tts_generation(session_id: str, scene: Scene) -> None:
     asyncio.create_task(_generate_scene_tts_task(session_id=session_id, scene=scene))
+    for npc in scene.npcs:
+        asyncio.create_task(
+            _generate_npc_tts_task(
+                session_id=session_id, scene_id=scene.scene_id, npc=npc
+            )
+        )
+
+
+def _find_scene(session: StorySession, scene_id: str) -> Scene | None:
+    if session.current_scene and session.current_scene.scene_id == scene_id:
+        return session.current_scene
+    for preloaded in session.preloaded_by_choice.values():
+        if preloaded.scene_id == scene_id:
+            return preloaded
+    return None
 
 
 def _find_scene_dialogue(session: StorySession, scene_id: str) -> str | None:
-    if session.current_scene and session.current_scene.scene_id == scene_id:
-        return session.current_scene.dialogue
-    for preloaded in session.preloaded_by_choice.values():
-        if preloaded.scene_id == scene_id:
-            return preloaded.dialogue
-    return None
+    scene = _find_scene(session=session, scene_id=scene_id)
+    return scene.dialogue if scene is not None else None
+
+
+def _find_npc(session: StorySession, scene_id: str, npc_id: str) -> SceneNpc | None:
+    scene = _find_scene(session=session, scene_id=scene_id)
+    if scene is None:
+        return None
+    return next((entry for entry in scene.npcs if entry.id == npc_id), None)
 
 
 async def _preload_next(session_id: str, session: StorySession, scene: Scene) -> None:
@@ -584,17 +858,22 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
         return
     preload_results: dict[str, Scene] = {}
     for choice in scene.choices:
-        target_location_id = session.world_transitions.get(session.current_location_id, {}).get(choice.slug, "")
-        trace = [*session.trace, TraceStep(
-            scene_id=scene.scene_id,
-            npc_id=scene.npc_id,
-            choice_slug=choice.slug,
-            choice_intent=choice.intent,
-            choice_context="",
-            related_email_ids=scene.related_email_ids,
-            from_location_id=session.current_location_id,
-            to_location_id=target_location_id,
-        )]
+        target_location_id = session.world_transitions.get(
+            session.current_location_id, {}
+        ).get(choice.slug, "")
+        trace = [
+            *session.trace,
+            TraceStep(
+                scene_id=scene.scene_id,
+                npc_id=scene.npc_id,
+                choice_slug=choice.slug,
+                choice_intent=choice.intent,
+                choice_context="",
+                related_email_ids=scene.related_email_ids,
+                from_location_id=session.current_location_id,
+                to_location_id=target_location_id,
+            ),
+        ]
         try:
             if target_location_id and target_location_id in session.world_locations:
                 preload_scene = _scene_with_world_state(
@@ -610,14 +889,18 @@ async def _preload_next(session_id: str, session: StorySession, scene: Scene) ->
         except Exception:
             log.warning(
                 "preload_scene_failed scene_id=%s choice_slug=%s",
-                scene.scene_id, choice.slug, exc_info=True,
+                scene.scene_id,
+                choice.slug,
+                exc_info=True,
             )
     async with session.lock:
         session.preloaded_by_choice = preload_results
 
 
 @router.post("/preview", response_model=InboxPreviewResponse)
-async def preview_scene(body: StartSceneRequest, request: Request) -> InboxPreviewResponse:
+async def preview_scene(
+    body: StartSceneRequest, request: Request
+) -> InboxPreviewResponse:
     repo = getattr(request.app.state, "auth_repository", None)
     emails, source = await _load_emails_with_source(body, repo)
     return InboxPreviewResponse(emails=emails, source=source)
@@ -634,10 +917,13 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
             detail="No emails found for today's inbox.",
         )
     world_build: WorldPlanBuild | None = None
-    try:
-        world_build = await _build_world_plan_async(emails, body.user_id)
-    except Exception:
-        log.warning("world_plan_build_failed user_id=%s", body.user_id, exc_info=True)
+    if _world_hub_mode_enabled():
+        try:
+            world_build = await _build_world_plan_async(emails, body.user_id)
+        except Exception:
+            log.warning(
+                "world_plan_build_failed user_id=%s", body.user_id, exc_info=True
+            )
     first_scene: Scene
     world_id = ""
     current_location_id = ""
@@ -651,8 +937,17 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
         world_id = world_build.plan.world_id
         current_location_id = SHARED_WORLD_LOCATION_ID
         first_scene = _build_shared_world_scene(world_build, emails)
-        world_locations = {current_location_id: first_scene}
-        world_transitions = {current_location_id: {}}
+        first_scene = await _fill_hub_choices_from_tree(first_scene, emails)
+        world_locations = {
+            location.id: location.scene.model_copy(deep=True)
+            for location in world_build.plan.locations
+        }
+        world_locations[current_location_id] = first_scene
+        world_transitions = {
+            location_id: transitions.copy()
+            for location_id, transitions in world_build.plan.transitions.items()
+        }
+        world_transitions.setdefault(current_location_id, {})
     else:
         try:
             first_scene = await _build_scene_async(emails, [])
@@ -676,40 +971,61 @@ async def start_scene(body: StartSceneRequest, request: Request) -> StartSceneRe
         run_seed=run_seed,
     )
     if current_location_id:
-        first_scene = _scene_with_world_state(session=session, scene=first_scene, location_id=current_location_id)
+        first_scene = _scene_with_world_state(
+            session=session, scene=first_scene, location_id=current_location_id
+        )
         session.current_scene = first_scene
     _attach_scene_tts(session_id=session_id, scene=first_scene)
     SESSIONS[session_id] = session
     log.info(
         "start_scene session_id=%s email_count=%s scene_id=%s terminal=%s",
-        session_id, len(emails), first_scene.scene_id, first_scene.is_terminal,
+        session_id,
+        len(emails),
+        first_scene.scene_id,
+        first_scene.is_terminal,
     )
     await _generate_scene_tts_task(session_id=session_id, scene=first_scene)
     asyncio.create_task(_preload_next(session_id, session, first_scene))
-    return StartSceneResponse(session_id=session_id, scene=first_scene, trace=[], done=first_scene.is_terminal)
+    return StartSceneResponse(
+        session_id=session_id, scene=first_scene, trace=[], done=first_scene.is_terminal
+    )
 
 
 @router.post("/{session_id}/advance", response_model=AdvanceSceneResponse)
-async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> AdvanceSceneResponse:
+async def advance_scene(
+    session_id: str, request: AdvanceSceneRequest
+) -> AdvanceSceneResponse:
     session = SESSIONS.get(session_id)
     if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
     current_scene = session.current_scene
     if current_scene is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Current scene is missing from session.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Current scene is missing from session.",
+        )
     if current_scene.is_terminal:
         return AdvanceSceneResponse(scene=current_scene, trace=session.trace, done=True)
 
-    target_npc = next((npc for npc in current_scene.npcs if npc.id == request.npc_id), None)
+    target_npc = next(
+        (npc for npc in current_scene.npcs if npc.id == request.npc_id), None
+    )
     if request.npc_id and current_scene.npcs and target_npc is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"message": "NPC is no longer available in this world.", "allowed_npcs": [npc.id for npc in current_scene.npcs]},
+            detail={
+                "message": "NPC is no longer available in this world.",
+                "allowed_npcs": [npc.id for npc in current_scene.npcs],
+            },
         )
     if target_npc is None and current_scene.npcs:
         target_npc = current_scene.npcs[0]
 
-    choice_source = target_npc.choices if target_npc is not None else current_scene.choices
+    choice_source = (
+        target_npc.choices if target_npc is not None else current_scene.choices
+    )
     related_email_ids = (
         target_npc.related_email_ids or [target_npc.email_id]
         if target_npc is not None
@@ -720,15 +1036,26 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
     if request.choice_slug not in allowed:
         log.warning(
             "advance_scene_bad_slug session_id=%s slug=%s allowed=%s",
-            session_id, request.choice_slug, sorted(allowed),
+            session_id,
+            request.choice_slug,
+            sorted(allowed),
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"message": "Invalid choice slug.", "allowed_choices": sorted(allowed)},
+            detail={
+                "message": "Invalid choice slug.",
+                "allowed_choices": sorted(allowed),
+            },
         )
 
     chosen = allowed[request.choice_slug]
-    next_location_id = session.current_location_id if target_npc is not None else session.world_transitions.get(session.current_location_id, {}).get(request.choice_slug, "")
+    next_location_id = (
+        session.current_location_id
+        if target_npc is not None
+        else session.world_transitions.get(session.current_location_id, {}).get(
+            request.choice_slug, ""
+        )
+    )
     step = TraceStep(
         scene_id=current_scene.scene_id,
         npc_id=active_npc_id,
@@ -742,8 +1069,14 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
     next_trace = [*session.trace, step]
 
     if target_npc is not None:
-        remaining_npcs = [npc.model_copy(deep=True) for npc in current_scene.npcs if npc.id != target_npc.id]
-        next_scene = _build_shared_world_next_scene(current_scene, remaining_npcs, session)
+        remaining_npcs = [
+            npc.model_copy(deep=True)
+            for npc in current_scene.npcs
+            if npc.id != target_npc.id
+        ]
+        next_scene = _build_shared_world_next_scene(
+            current_scene, remaining_npcs, session
+        )
     else:
         next_scene = session.preloaded_by_choice.get(request.choice_slug)
         if next_scene is None:
@@ -781,17 +1114,26 @@ async def advance_scene(session_id: str, request: AdvanceSceneRequest) -> Advanc
         asyncio.create_task(_preload_next(session_id, session, next_scene))
     log.info(
         "advance_scene session_id=%s scene_id=%s done=%s trace_len=%s",
-        session_id, next_scene.scene_id, next_scene.is_terminal, len(next_trace),
+        session_id,
+        next_scene.scene_id,
+        next_scene.is_terminal,
+        len(next_trace),
     )
-    return AdvanceSceneResponse(scene=next_scene, trace=next_trace, done=next_scene.is_terminal)
+    return AdvanceSceneResponse(
+        scene=next_scene, trace=next_trace, done=next_scene.is_terminal
+    )
 
 
 @router.post("/{session_id}/resolve", response_model=ResolveResponse)
-async def resolve_scene(session_id: str, request: ResolveSceneRequest | None = None) -> ResolveResponse:
+async def resolve_scene(
+    session_id: str, request: ResolveSceneRequest | None = None
+) -> ResolveResponse:
     """After the story ends, turn the full trace into actual email reply drafts."""
     session = SESSIONS.get(session_id)
     if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
     if not session.trace:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -820,7 +1162,9 @@ async def resolve_scene(session_id: str, request: ResolveSceneRequest | None = N
 async def send_scene_emails(session_id: str, request: Request) -> SendResponse:
     session = SESSIONS.get(session_id)
     if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
     if not session.resolved_drafts:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -856,10 +1200,14 @@ async def send_scene_emails(session_id: str, request: Request) -> SendResponse:
 
 
 @router.post("/{session_id}/send/{email_id}", response_model=DraftSendResult)
-async def send_single_draft(session_id: str, email_id: str, request: Request) -> DraftSendResult:
+async def send_single_draft(
+    session_id: str, email_id: str, request: Request
+) -> DraftSendResult:
     session = SESSIONS.get(session_id)
     if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
     draft = next((d for d in session.resolved_drafts if d.email_id == email_id), None)
     if draft is None:
         raise HTTPException(
@@ -867,7 +1215,9 @@ async def send_single_draft(session_id: str, email_id: str, request: Request) ->
             detail=f"No resolved draft for email_id={email_id}. Call /resolve first.",
         )
     repo: AuthRepository = request.app.state.auth_repository
-    user_token = await asyncio.to_thread(repo.get_google_credentials_for_user, session.user_id)
+    user_token = await asyncio.to_thread(
+        repo.get_google_credentials_for_user, session.user_id
+    )
     if user_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -876,13 +1226,20 @@ async def send_single_draft(session_id: str, email_id: str, request: Request) ->
     try:
         results, _ = await send_draft_replies(user_token, [draft])
     except Exception as exc:
-        log.exception("send_single_draft_failed session_id=%s email_id=%s", session_id, email_id)
+        log.exception(
+            "send_single_draft_failed session_id=%s email_id=%s", session_id, email_id
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to send email: {exc}",
         ) from exc
     result = results[0]
-    log.info("send_single_draft_ok session_id=%s email_id=%s status=%s", session_id, email_id, result.status)
+    log.info(
+        "send_single_draft_ok session_id=%s email_id=%s status=%s",
+        session_id,
+        email_id,
+        result.status,
+    )
     return DraftSendResult(**asdict(result))
 
 
@@ -890,14 +1247,21 @@ async def send_single_draft(session_id: str, email_id: str, request: Request) ->
 async def stream_scene_tts(session_id: str, scene_id: str):
     session = SESSIONS.get(session_id)
     if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
     entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
     if entry is None:
         dialogue = _find_scene_dialogue(session=session, scene_id=scene_id)
         if dialogue is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scene not found for this session.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Scene not found for this session.",
+            )
         try:
-            await asyncio.to_thread(generate_and_cache_scene_tts, session_id, scene_id, dialogue)
+            await asyncio.to_thread(
+                generate_and_cache_scene_tts, session_id, scene_id, dialogue
+            )
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -905,11 +1269,77 @@ async def stream_scene_tts(session_id: str, scene_id: str):
             ) from exc
         entry = get_scene_entry(session_id=session_id, scene_id=scene_id)
     if entry is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TTS cache unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TTS cache unavailable.",
+        )
     if entry.status == "pending":
-        entry = await _wait_for_ready_scene_tts(session_id=session_id, scene_id=scene_id)
+        entry = await _wait_for_ready_scene_tts(
+            session_id=session_id, scene_id=scene_id
+        )
     if entry is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TTS cache unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TTS cache unavailable.",
+        )
+    if entry.status == "ready" and entry.audio_bytes:
+        return StreamingResponse(BytesIO(entry.audio_bytes), media_type="audio/mpeg")
+    if entry.status == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"TTS generation failed: {entry.error or 'provider_error'}",
+        )
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"status": "pending"},
+        headers={"Retry-After": "1"},
+    )
+
+
+@router.get("/{session_id}/{scene_id}/npc/{npc_id}/tts")
+async def stream_npc_tts(session_id: str, scene_id: str, npc_id: str):
+    session = SESSIONS.get(session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found."
+        )
+    cache_id = _npc_tts_cache_id(scene_id=scene_id, npc_id=npc_id)
+    entry = get_scene_entry(session_id=session_id, scene_id=cache_id)
+    if entry is None:
+        npc = _find_npc(session=session, scene_id=scene_id, npc_id=npc_id)
+        if npc is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="NPC not found for this scene.",
+            )
+        try:
+            await asyncio.to_thread(
+                generate_and_cache_scene_tts,
+                session_id,
+                cache_id,
+                npc.opening_line,
+                _npc_voice_key(npc),
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to generate NPC audio: {exc}",
+            ) from exc
+        entry = get_scene_entry(session_id=session_id, scene_id=cache_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TTS cache unavailable.",
+        )
+    if entry.status == "pending":
+        entry = await _wait_for_ready_scene_tts(
+            session_id=session_id, scene_id=cache_id
+        )
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TTS cache unavailable.",
+        )
     if entry.status == "ready" and entry.audio_bytes:
         return StreamingResponse(BytesIO(entry.audio_bytes), media_type="audio/mpeg")
     if entry.status == "failed":

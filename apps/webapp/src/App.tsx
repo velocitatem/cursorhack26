@@ -6,15 +6,14 @@ import { DialogueOverlay } from './components/DialogueOverlay'
 import { MobileControls } from './components/MobileControls'
 import { WorldCanvas } from './components/WorldCanvas'
 import type { GameRuntimeControls } from './game/runtime/useGameRuntime'
+import type { DraftSendResult, EmailDraft, EmailItem, InboxPreviewResponse, TraceStep } from './game/story/schemas'
+import type { SceneNpc } from './game/story/types'
 import { useDialogueAudio } from './game/story/useDialogueAudio'
 import { useDialogueState } from './game/story/useDialogueState'
 import { useSceneLoader } from './game/story/useSceneLoader'
-import type { DraftSendResult, EmailDraft, EmailItem, InboxPreviewResponse, TraceStep } from './game/story/schemas'
-import type { SceneNpc } from './game/story/types'
 
 const previewSourceLabels: Record<InboxPreviewResponse['source'], string> = {
   gmail: 'Live Gmail',
-  mock: 'Demo Inbox',
   override: 'Loaded Inbox',
 }
 
@@ -55,7 +54,6 @@ function PreludeOverlay({
   userLabel,
   emails,
   source,
-  mode,
   stage,
   error,
   onRetry,
@@ -64,19 +62,12 @@ function PreludeOverlay({
   userLabel: string
   emails: EmailItem[]
   source: InboxPreviewResponse['source']
-  mode: string
   stage: 'previewing' | 'ready' | 'generating'
   error: string | null
   onRetry: () => void
   onBeginRun: (emails: EmailItem[]) => void
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(emails.map(email => email.id)))
-
-  useEffect(() => {
-    if (stage === 'ready') {
-      setSelectedIds(new Set(emails.map(email => email.id)))
-    }
-  }, [emails, stage])
 
   const toggleEmail = (emailId: string) => {
     setSelectedIds(previous => {
@@ -110,7 +101,7 @@ function PreludeOverlay({
   const metrics = [
     { label: 'Selected', value: selectedEmails.length.toString().padStart(2, '0') },
     { label: 'Source', value: previewSourceLabels[source] },
-    { label: 'Mode', value: mode === 'stub' ? 'Demo' : 'Live' },
+    { label: 'Mode', value: 'Live API' },
   ]
   const skeletonIds = Array.from({ length: 4 }, (_, index) => `skeleton-${index}`)
 
@@ -138,7 +129,6 @@ function PreludeOverlay({
           </div>
 
           <div className="prelude-status-card">
-            <div className="status-ring" aria-hidden="true" />
             <div>
               <p className="eyebrow">Story build</p>
               <h2>{statusTitle}</h2>
@@ -549,6 +539,7 @@ function GameShell({
       : runStage === 'ready'
         ? 'ready'
         : 'previewing'
+  const previewSelectionKey = previewEmails.map(email => email.id).join('|') || 'empty'
   const finaleStage: 'review' | 'sending' | 'sent' =
     runStage === 'sending' || runStage === 'sent' ? runStage : 'review'
 
@@ -729,10 +720,10 @@ function GameShell({
 
       {isPreviewVisible ? (
         <PreludeOverlay
+          key={`${previewStage}:${previewSelectionKey}`}
           userLabel={userLabel}
           emails={previewEmails}
           source={previewSource}
-          mode={mode}
           stage={previewStage}
           error={error}
           onRetry={handleRestart}
@@ -779,10 +770,10 @@ function App() {
   if (isLoading) {
     return (
       <main className="loading-shell">
-        <p className="auth-brand">Holodeck</p>
-        <p className="auth-kicker">SYS INIT</p>
-        <h1 className="auth-title">Holodeck calibrating emitters.</h1>
-        <p className="auth-copy">Validating holodeck session token.</p>
+        <p className="auth-brand">Inbox Quest</p>
+        <p className="auth-kicker">Loading</p>
+        <h1 className="auth-title">Getting your session ready.</h1>
+        <p className="auth-copy">This only takes a moment.</p>
       </main>
     )
   }
@@ -791,8 +782,12 @@ function App() {
     return <AuthGate authError={authError} onContinue={beginGoogleLogin} />
   }
 
+  if (!session.user?.id) {
+    return <AuthGate authError="Session is missing user identity. Sign in again." onContinue={beginGoogleLogin} />
+  }
+
   const userLabel = session.user?.name ?? session.user?.email ?? 'Player'
-  const userId = session.user?.id ?? 'demo-user'
+  const userId = session.user.id
 
   return <GameShell userId={userId} userLabel={userLabel} onLogout={logout} />
 }

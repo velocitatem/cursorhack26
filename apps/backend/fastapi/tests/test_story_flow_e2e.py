@@ -152,7 +152,15 @@ def test_story_scene_flow_end_to_end(monkeypatch):
         "routes.story.ensure_scene_entry",
         lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
     )
-    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "routes.story.ensure_speaker_entry",
+        lambda session_id, scene_id, voice_key: SimpleNamespace(
+            voice_id=f"voice-{voice_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr("routes.story.SESSIONS", {})
 
     client = TestClient(app)
@@ -185,7 +193,9 @@ def test_story_scene_flow_end_to_end(monkeypatch):
     assert advance_json["scene"]["voice_id"] == "voice-1"
     assert len(advance_json["trace"]) == 1
     assert advance_json["trace"][0]["choice_intent"] == "agree_immediately"
-    assert advance_json["trace"][0]["choice_context"] == "timeline 6 weeks, budget 20k max"
+    assert (
+        advance_json["trace"][0]["choice_context"] == "timeline 6 weeks, budget 20k max"
+    )
     assert advance_json["trace"][0]["related_email_ids"] == ["email-1"]
     assert advance_json["trace"][0]["from_location_id"] == ""
     assert advance_json["trace"][0]["to_location_id"] == ""
@@ -208,12 +218,23 @@ def test_story_scene_flow_end_to_end(monkeypatch):
 
 
 def test_story_start_uses_world_plan(monkeypatch):
+    monkeypatch.setenv("STORY_WORLD_HUB_MODE", "true")
     app = FastAPI()
     app.include_router(story_router)
 
     inbox = [
-        {"id": "email-1", "sender": "manager@company.com", "subject": "Need status update by EOD", "snippet": "Send update."},
-        {"id": "email-2", "sender": "client@startup.io", "subject": "Follow-up on proposal", "snippet": "Need timeline."},
+        {
+            "id": "email-1",
+            "sender": "manager@company.com",
+            "subject": "Need status update by EOD",
+            "snippet": "Send update.",
+        },
+        {
+            "id": "email-2",
+            "sender": "client@startup.io",
+            "subject": "Follow-up on proposal",
+            "snippet": "Need timeline.",
+        },
     ]
 
     scene_start = Scene.model_validate(
@@ -222,7 +243,9 @@ def test_story_start_uses_world_plan(monkeypatch):
             "npc_id": "email-1",
             "npc_name": "Manager Steve",
             "dialogue": "Send update now. Keep it concise.",
-            "choices": [{"slug": "go-next", "label": "Go next", "intent": "agree_immediately"}],
+            "choices": [
+                {"slug": "go-next", "label": "Go next", "intent": "agree_immediately"}
+            ],
             "is_terminal": False,
             "related_email_ids": ["email-1"],
         }
@@ -242,8 +265,16 @@ def test_story_start_uses_world_plan(monkeypatch):
         world_id="world-demo",
         entry_location_id="loc-1",
         locations=[
-            WorldLocation(id="loc-1", scene=scene_start, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
-            WorldLocation(id="loc-2", scene=scene_end, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+            WorldLocation(
+                id="loc-1",
+                scene=scene_start,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
+            WorldLocation(
+                id="loc-2",
+                scene=scene_end,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
         ],
         transitions={"loc-1": {"go-next": "loc-2"}, "loc-2": {}},
     )
@@ -260,17 +291,37 @@ def test_story_start_uses_world_plan(monkeypatch):
         "routes.story.ensure_scene_entry",
         lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
     )
-    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "routes.story.ensure_speaker_entry",
+        lambda session_id, scene_id, voice_key: SimpleNamespace(
+            voice_id=f"voice-{voice_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr("routes.story.SESSIONS", {})
 
     client = TestClient(app)
-    start = client.post("/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox})
+    start = client.post(
+        "/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox}
+    )
     assert start.status_code == 200
     body = start.json()
     assert body["scene"]["world"]["world_id"] == "world-demo"
     assert body["scene"]["world"]["location_id"] == "hub"
     assert len(body["scene"]["npcs"]) == 2
     assert {npc["email_id"] for npc in body["scene"]["npcs"]} == {"email-1", "email-2"}
+    assert (
+        body["scene"]["npcs"][0]["tts"]
+        == f"/story/scene/{body['session_id']}/scene-loc-1-hub/npc/email-1/tts"
+    )
+    assert body["scene"]["npcs"][0]["voice_id"] == "voice-email-1"
+    assert (
+        body["scene"]["npcs"][1]["tts"]
+        == f"/story/scene/{body['session_id']}/scene-loc-1-hub/npc/email-2/tts"
+    )
+    assert body["scene"]["npcs"][1]["voice_id"] == "voice-email-2"
     assert body["done"] is False
 
     session_id = body["session_id"]
@@ -297,14 +348,32 @@ def test_story_start_uses_world_plan(monkeypatch):
     assert second_advance_json["scene"]["npcs"] == []
 
 
-def test_story_start_builds_one_hub_npc_per_email_even_with_single_planner_location(monkeypatch):
+def test_story_start_builds_one_hub_npc_per_email_even_with_single_planner_location(
+    monkeypatch,
+):
+    monkeypatch.setenv("STORY_WORLD_HUB_MODE", "true")
     app = FastAPI()
     app.include_router(story_router)
 
     inbox = [
-        {"id": "email-1", "sender": "manager@company.com", "subject": "Need status update by EOD", "snippet": "Send update."},
-        {"id": "email-2", "sender": "client@startup.io", "subject": "Follow-up on proposal", "snippet": "Need timeline."},
-        {"id": "email-3", "sender": "ops@company.com", "subject": "Approve payment", "snippet": "Need same-day approval."},
+        {
+            "id": "email-1",
+            "sender": "manager@company.com",
+            "subject": "Need status update by EOD",
+            "snippet": "Send update.",
+        },
+        {
+            "id": "email-2",
+            "sender": "client@startup.io",
+            "subject": "Follow-up on proposal",
+            "snippet": "Need timeline.",
+        },
+        {
+            "id": "email-3",
+            "sender": "ops@company.com",
+            "subject": "Approve payment",
+            "snippet": "Need same-day approval.",
+        },
     ]
 
     single_hub_scene = Scene.model_validate(
@@ -313,7 +382,9 @@ def test_story_start_builds_one_hub_npc_per_email_even_with_single_planner_locat
             "npc_id": "email-1",
             "npc_name": "Manager Steve",
             "dialogue": "Old planner text.",
-            "choices": [{"slug": "go-next", "label": "Go next", "intent": "agree_immediately"}],
+            "choices": [
+                {"slug": "go-next", "label": "Go next", "intent": "agree_immediately"}
+            ],
             "is_terminal": False,
             "related_email_ids": ["email-1", "email-2", "email-3"],
             "npcs": [
@@ -323,7 +394,13 @@ def test_story_start_builds_one_hub_npc_per_email_even_with_single_planner_locat
                     "email_id": "email-1",
                     "position": {"x": 0, "y": 0, "z": 0},
                     "opening_line": "Old planner text.",
-                    "choices": [{"slug": "go-next", "label": "Go next", "intent": "agree_immediately"}],
+                    "choices": [
+                        {
+                            "slug": "go-next",
+                            "label": "Go next",
+                            "intent": "agree_immediately",
+                        }
+                    ],
                     "related_email_ids": ["email-1"],
                 }
             ],
@@ -333,7 +410,11 @@ def test_story_start_builds_one_hub_npc_per_email_even_with_single_planner_locat
         world_id="world-hub",
         entry_location_id="hub",
         locations=[
-            WorldLocation(id="hub", scene=single_hub_scene, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+            WorldLocation(
+                id="hub",
+                scene=single_hub_scene,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
         ],
         transitions={"hub": {}},
     )
@@ -350,27 +431,67 @@ def test_story_start_builds_one_hub_npc_per_email_even_with_single_planner_locat
         "routes.story.ensure_scene_entry",
         lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
     )
-    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "routes.story.ensure_speaker_entry",
+        lambda session_id, scene_id, voice_key: SimpleNamespace(
+            voice_id=f"voice-{voice_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr("routes.story.SESSIONS", {})
 
     client = TestClient(app)
-    start = client.post("/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox})
+    start = client.post(
+        "/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox}
+    )
     assert start.status_code == 200
     body = start.json()
     assert len(body["scene"]["npcs"]) == 3
-    assert [npc["email_id"] for npc in body["scene"]["npcs"]] == ["email-1", "email-2", "email-3"]
+    assert [npc["email_id"] for npc in body["scene"]["npcs"]] == [
+        "email-1",
+        "email-2",
+        "email-3",
+    ]
 
 
-def test_story_start_uses_fixed_hub_npc_roster_names(monkeypatch):
+def test_story_start_uses_sender_derived_hub_npc_names(monkeypatch):
+    monkeypatch.setenv("STORY_WORLD_HUB_MODE", "true")
     app = FastAPI()
     app.include_router(story_router)
 
     inbox = [
-        {"id": "email-1", "sender": "candidate1@example.com", "subject": "Frontend application", "snippet": "React engineer."},
-        {"id": "email-2", "sender": "candidate2@example.com", "subject": "Frontend application", "snippet": "Vue engineer."},
-        {"id": "email-3", "sender": "candidate3@example.com", "subject": "Frontend application", "snippet": "Typescript engineer."},
-        {"id": "email-4", "sender": "candidate4@example.com", "subject": "Frontend application", "snippet": "Design systems."},
-        {"id": "email-5", "sender": "candidate5@example.com", "subject": "Frontend application", "snippet": "Strong CSS."},
+        {
+            "id": "email-1",
+            "sender": "candidate1@example.com",
+            "subject": "Frontend application",
+            "snippet": "React engineer.",
+        },
+        {
+            "id": "email-2",
+            "sender": "candidate2@example.com",
+            "subject": "Frontend application",
+            "snippet": "Vue engineer.",
+        },
+        {
+            "id": "email-3",
+            "sender": "candidate3@example.com",
+            "subject": "Frontend application",
+            "snippet": "Typescript engineer.",
+        },
+        {
+            "id": "email-4",
+            "sender": "candidate4@example.com",
+            "subject": "Frontend application",
+            "snippet": "Design systems.",
+        },
+        {
+            "id": "email-5",
+            "sender": "candidate5@example.com",
+            "subject": "Frontend application",
+            "snippet": "Strong CSS.",
+        },
     ]
 
     single_hub_scene = Scene.model_validate(
@@ -379,16 +500,32 @@ def test_story_start_uses_fixed_hub_npc_roster_names(monkeypatch):
             "npc_id": "email-1",
             "npc_name": "Planner Name",
             "dialogue": "Planner dialogue.",
-            "choices": [{"slug": "reply_now", "label": "Reply now", "intent": "agree_immediately"}],
+            "choices": [
+                {
+                    "slug": "reply_now",
+                    "label": "Reply now",
+                    "intent": "agree_immediately",
+                }
+            ],
             "is_terminal": False,
-            "related_email_ids": ["email-1", "email-2", "email-3", "email-4", "email-5"],
+            "related_email_ids": [
+                "email-1",
+                "email-2",
+                "email-3",
+                "email-4",
+                "email-5",
+            ],
         }
     )
     world_plan = WorldPlan(
         world_id="world-hub",
         entry_location_id="hub",
         locations=[
-            WorldLocation(id="hub", scene=single_hub_scene, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+            WorldLocation(
+                id="hub",
+                scene=single_hub_scene,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
         ],
         transitions={"hub": {}},
     )
@@ -405,30 +542,282 @@ def test_story_start_uses_fixed_hub_npc_roster_names(monkeypatch):
         "routes.story.ensure_scene_entry",
         lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
     )
-    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "routes.story.ensure_speaker_entry",
+        lambda session_id, scene_id, voice_key: SimpleNamespace(
+            voice_id=f"voice-{voice_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr("routes.story.SESSIONS", {})
 
     client = TestClient(app)
-    start = client.post("/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox})
+    start = client.post(
+        "/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox}
+    )
     assert start.status_code == 200
     body = start.json()
     assert [npc["name"] for npc in body["scene"]["npcs"]] == [
-        "Alberto",
-        "Daniel Kong",
-        "Paul Ruiz",
-        "Sebas",
-        "Daniel Rosel",
+        "Candidate1",
+        "Candidate2",
+        "Candidate3",
+        "Candidate4",
+        "Candidate5",
     ]
-    assert body["scene"]["dialogue"].startswith("Hi, I'm Alberto.")
+    assert body["scene"]["dialogue"].startswith("Hi, I'm Candidate1.")
 
 
-def test_story_start_repairs_non_terminal_scene_without_choices(monkeypatch):
+def test_story_start_preserves_planner_npc_identity_when_explicit(monkeypatch):
+    monkeypatch.setenv("STORY_WORLD_HUB_MODE", "true")
     app = FastAPI()
     app.include_router(story_router)
 
     inbox = [
-        {"id": "email-1", "sender": "manager@company.com", "subject": "Need status update by EOD", "snippet": "Send update."},
-        {"id": "email-2", "sender": "client@startup.io", "subject": "Follow-up on proposal", "snippet": "Need timeline."},
+        {
+            "id": "email-1",
+            "sender": "candidate1@example.com",
+            "subject": "Frontend application",
+            "snippet": "React engineer.",
+        },
+        {
+            "id": "email-2",
+            "sender": "candidate2@example.com",
+            "subject": "Frontend application",
+            "snippet": "Vue engineer.",
+        },
+    ]
+
+    planner_scene = Scene.model_validate(
+        {
+            "scene_id": "planner-hub",
+            "npc_id": "email-1",
+            "npc_name": "Alya",
+            "dialogue": "I need your review before noon.",
+            "choices": [
+                {
+                    "slug": "reply_now",
+                    "label": "Reply now",
+                    "intent": "agree_immediately",
+                }
+            ],
+            "is_terminal": False,
+            "related_email_ids": ["email-1", "email-2"],
+            "npcs": [
+                {
+                    "id": "email-1",
+                    "name": "Alya",
+                    "email_id": "email-1",
+                    "position": {"x": -4, "y": 0, "z": 0},
+                    "opening_line": "I need your review before noon.",
+                    "choices": [
+                        {
+                            "slug": "reply_now",
+                            "label": "Reply now",
+                            "intent": "agree_immediately",
+                        }
+                    ],
+                    "related_email_ids": ["email-1"],
+                },
+                {
+                    "id": "email-2",
+                    "name": "Bruno",
+                    "email_id": "email-2",
+                    "position": {"x": 4, "y": 0, "z": 0},
+                    "opening_line": "I need pricing confirmation today.",
+                    "choices": [
+                        {
+                            "slug": "reply_now",
+                            "label": "Reply now",
+                            "intent": "agree_immediately",
+                        }
+                    ],
+                    "related_email_ids": ["email-2"],
+                },
+            ],
+        }
+    )
+    world_plan = WorldPlan(
+        world_id="world-hub",
+        entry_location_id="hub",
+        locations=[
+            WorldLocation(
+                id="hub",
+                scene=planner_scene,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
+        ],
+        transitions={"hub": {}},
+    )
+
+    monkeypatch.setattr(
+        "routes.story.build_world_plan",
+        lambda emails, user_id, max_locations=5, run_seed=None: WorldPlanBuild(
+            plan=world_plan,
+            source="test",
+            run_seed=run_seed or 0,
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.ensure_scene_entry",
+        lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
+    )
+    monkeypatch.setattr(
+        "routes.story.ensure_speaker_entry",
+        lambda session_id, scene_id, voice_key: SimpleNamespace(
+            voice_id=f"voice-{voice_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr("routes.story.SESSIONS", {})
+
+    client = TestClient(app)
+    start = client.post(
+        "/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox}
+    )
+    assert start.status_code == 200
+    body = start.json()
+    assert [npc["name"] for npc in body["scene"]["npcs"]] == ["Alya", "Bruno"]
+    assert body["scene"]["dialogue"] == "I need your review before noon."
+
+
+def test_story_start_fills_hub_choices_from_tree(monkeypatch):
+    monkeypatch.setenv("STORY_WORLD_HUB_MODE", "true")
+    app = FastAPI()
+    app.include_router(story_router)
+
+    inbox = [
+        {
+            "id": "email-1",
+            "sender": "manager@company.com",
+            "subject": "Status update",
+            "snippet": "Need this before noon.",
+        },
+        {
+            "id": "email-2",
+            "sender": "client@startup.io",
+            "subject": "Pricing confirmation",
+            "snippet": "Can we confirm by today?",
+        },
+    ]
+
+    planner_scene = Scene.model_validate(
+        {
+            "scene_id": "planner-hub",
+            "npc_id": "email-1",
+            "npc_name": "Planner Name",
+            "dialogue": "Planner dialogue.",
+            "choices": [],
+            "is_terminal": False,
+            "related_email_ids": ["email-1", "email-2"],
+            "npcs": [],
+        }
+    )
+    world_plan = WorldPlan(
+        world_id="world-hub",
+        entry_location_id="hub",
+        locations=[
+            WorldLocation(
+                id="hub",
+                scene=planner_scene,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
+        ],
+        transitions={"hub": {}},
+    )
+
+    def fake_build_scene(emails, trace, max_scenes=3):
+        assert len(emails) == 1
+        assert trace == []
+        email = emails[0]
+        return Scene.model_validate(
+            {
+                "scene_id": f"tree-{email.id}",
+                "npc_id": email.id,
+                "npc_name": "Tree NPC",
+                "dialogue": f"I need your response for {email.subject}.",
+                "choices": [
+                    {
+                        "slug": f"{email.id}-direct",
+                        "label": "Answer directly",
+                        "intent": "direct_response",
+                    },
+                    {
+                        "slug": f"{email.id}-delay",
+                        "label": "Ask for time",
+                        "intent": "ask_for_more_time",
+                    },
+                    {
+                        "slug": f"{email.id}-alt",
+                        "label": "Offer alternative",
+                        "intent": "offer_alternative",
+                    },
+                ],
+                "is_terminal": False,
+                "related_email_ids": [email.id],
+            }
+        )
+
+    monkeypatch.setattr(
+        "routes.story.build_world_plan",
+        lambda emails, user_id, max_locations=5, run_seed=None: WorldPlanBuild(
+            plan=world_plan,
+            source="test",
+            run_seed=run_seed or 0,
+        ),
+    )
+    monkeypatch.setattr("routes.story.build_scene", fake_build_scene)
+    monkeypatch.setattr(
+        "routes.story.ensure_scene_entry",
+        lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
+    )
+    monkeypatch.setattr(
+        "routes.story.ensure_speaker_entry",
+        lambda session_id, scene_id, voice_key: SimpleNamespace(
+            voice_id=f"voice-{voice_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr("routes.story.SESSIONS", {})
+
+    client = TestClient(app)
+    start = client.post(
+        "/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox}
+    )
+    assert start.status_code == 200
+    body = start.json()
+
+    first_npc_choices = body["scene"]["npcs"][0]["choices"]
+    second_npc_choices = body["scene"]["npcs"][1]["choices"]
+
+    assert first_npc_choices[0]["slug"] == "email-1-direct"
+    assert second_npc_choices[0]["slug"] == "email-2-direct"
+    assert body["scene"]["choices"][0]["slug"] == "email-1-direct"
+
+
+def test_story_start_repairs_non_terminal_scene_without_choices(monkeypatch):
+    monkeypatch.setenv("STORY_WORLD_HUB_MODE", "true")
+    app = FastAPI()
+    app.include_router(story_router)
+
+    inbox = [
+        {
+            "id": "email-1",
+            "sender": "manager@company.com",
+            "subject": "Need status update by EOD",
+            "snippet": "Send update.",
+        },
+        {
+            "id": "email-2",
+            "sender": "client@startup.io",
+            "subject": "Follow-up on proposal",
+            "snippet": "Need timeline.",
+        },
     ]
 
     broken_scene = Scene.model_validate(
@@ -458,8 +847,16 @@ def test_story_start_repairs_non_terminal_scene_without_choices(monkeypatch):
         world_id="world-broken",
         entry_location_id="loc-1",
         locations=[
-            WorldLocation(id="loc-1", scene=broken_scene, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
-            WorldLocation(id="loc-2", scene=terminal_scene, bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14}),
+            WorldLocation(
+                id="loc-1",
+                scene=broken_scene,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
+            WorldLocation(
+                id="loc-2",
+                scene=terminal_scene,
+                bounds={"minX": -14, "maxX": 14, "minZ": -14, "maxZ": 14},
+            ),
         ],
         transitions={"loc-1": {"reply_now": "loc-2"}, "loc-2": {}},
     )
@@ -476,15 +873,25 @@ def test_story_start_repairs_non_terminal_scene_without_choices(monkeypatch):
         "routes.story.ensure_scene_entry",
         lambda session_id, scene_id: SimpleNamespace(voice_id="voice-1"),
     )
-    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "routes.story.ensure_speaker_entry",
+        lambda session_id, scene_id, voice_key: SimpleNamespace(
+            voice_id=f"voice-{voice_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "routes.story.generate_and_cache_scene_tts", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr("routes.story.SESSIONS", {})
 
     client = TestClient(app)
-    start = client.post("/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox})
+    start = client.post(
+        "/story/scene/start", json={"user_id": "demo-user", "inbox_override": inbox}
+    )
     assert start.status_code == 200
     body = start.json()
     assert body["scene"]["is_terminal"] is False
-    assert len(body["scene"]["choices"]) == 1
+    assert len(body["scene"]["choices"]) == 3
     assert body["scene"]["choices"][0]["slug"] == "reply_now"
     assert body["scene"]["npcs"]
     assert body["scene"]["npcs"][0]["choices"][0]["slug"] == "reply_now"
@@ -591,10 +998,94 @@ def test_scene_tts_stream_provider_failure(monkeypatch):
     monkeypatch.setattr(
         "routes.story.get_scene_entry",
         lambda session_id, scene_id: SceneTTSCacheEntry(
-            status="failed", voice_id="voice-3", audio_bytes=None, error="provider timeout"
+            status="failed",
+            voice_id="voice-3",
+            audio_bytes=None,
+            error="provider timeout",
         ),
     )
     client = TestClient(app)
     res = client.get(f"/story/scene/{session_id}/{scene_id}/tts")
     assert res.status_code == 502
     assert "provider timeout" in res.json()["detail"]
+
+
+def test_npc_tts_stream_generates_audio_for_selected_npc(monkeypatch):
+    app = FastAPI()
+    app.include_router(story_router)
+    session_id = "session-4"
+    scene_id = "scene-hub"
+    npc_id = "email-2"
+    target_cache_id = f"{scene_id}::npc::{npc_id}"
+    calls: list[tuple[str, str, str, str | None]] = []
+    state = {"ready": False}
+    monkeypatch.setattr(
+        "routes.story.SESSIONS",
+        {
+            session_id: StorySession(
+                emails=[],
+                current_scene=Scene.model_validate(
+                    {
+                        "scene_id": scene_id,
+                        "npc_id": "email-1",
+                        "npc_name": "Alberto",
+                        "dialogue": "Primary dialogue.",
+                        "choices": [],
+                        "is_terminal": False,
+                        "related_email_ids": ["email-1", "email-2"],
+                        "npcs": [
+                            {
+                                "id": "email-1",
+                                "name": "Alberto",
+                                "email_id": "email-1",
+                                "position": {"x": 0, "y": 0, "z": 0},
+                                "opening_line": "Primary dialogue.",
+                                "choices": [],
+                                "related_email_ids": ["email-1"],
+                            },
+                            {
+                                "id": "email-2",
+                                "name": "Paul Ruiz",
+                                "email_id": "email-2",
+                                "position": {"x": 1, "y": 0, "z": 0},
+                                "opening_line": "This is Paul speaking, not Alberto.",
+                                "choices": [],
+                                "related_email_ids": ["email-2"],
+                            },
+                        ],
+                    }
+                ),
+            )
+        },
+    )
+
+    def fake_get_scene_entry(session_id, scene_id):
+        if scene_id == target_cache_id and state["ready"]:
+            return SceneTTSCacheEntry(
+                status="ready",
+                voice_id="voice-email-2",
+                audio_bytes=b"ID3npc",
+                error=None,
+            )
+        return None
+
+    def fake_generate(session_id, scene_id, text, voice_key=None):
+        calls.append((session_id, scene_id, text, voice_key))
+        state["ready"] = True
+
+    monkeypatch.setattr("routes.story.get_scene_entry", fake_get_scene_entry)
+    monkeypatch.setattr("routes.story.generate_and_cache_scene_tts", fake_generate)
+
+    client = TestClient(app)
+    res = client.get(f"/story/scene/{session_id}/{scene_id}/npc/{npc_id}/tts")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("audio/mpeg")
+    assert res.content == b"ID3npc"
+    assert calls == [
+        (
+            session_id,
+            target_cache_id,
+            "This is Paul speaking, not Alberto.",
+            "email-2",
+        )
+    ]

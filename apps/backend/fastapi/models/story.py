@@ -100,7 +100,7 @@ class Scene(BaseModel):
 
 
 class StartSceneRequest(BaseModel):
-    user_id: str = "demo-user"
+    user_id: str = Field(min_length=1)
     inbox_override: list[EmailItem] | None = None
 
 
@@ -130,7 +130,7 @@ class StartSceneResponse(BaseModel):
 
 class InboxPreviewResponse(BaseModel):
     emails: list[EmailItem]
-    source: Literal["gmail", "mock", "override"]
+    source: Literal["gmail", "override"]
 
 
 class AdvanceSceneResponse(BaseModel):

@@ -1,84 +1,77 @@
-<div align="center">
-  <img src="./banner.svg" alt="Inbox RPG" />
+# Inbox Quest
 
-  <p align="center">
-    <a href="https://react.dev"><img src="https://img.shields.io/badge/React-19.2-blue?style=flat&logo=react&logoColor=white" alt="React 19" /></a>
-    <a href="https://threejs.org/"><img src="https://img.shields.io/badge/Three.js-Black?style=flat&logo=three.js&logoColor=white" alt="Three.js" /></a>
-    <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white" alt="FastAPI" /></a>
-    <a href="https://openai.com/"><img src="https://img.shields.io/badge/OpenAI-412991?style=flat&logo=openai&logoColor=white" alt="OpenAI" /></a>
-    <a href="https://elevenlabs.io/"><img src="https://img.shields.io/badge/ElevenLabs-000000?style=flat&logo=elevenlabs&logoColor=white" alt="ElevenLabs" /></a>
-  </p>
-</div>
+Turn your inbox into a short 3D RPG run where every NPC interaction becomes a real, reviewable email reply.
 
-Turn your daily email triage into a 3D roleplaying game you will actually want to play.
+This repository is a hackathon project focused on one thing only: fully functional Gmail triage through gameplay. There is no demo bypass mode in the runtime flow.
 
 ## What it does
-Inbox RPG reimagines email triage by turning your inbox into an interactive 3D world. Instead of grinding through a standard email client, you connect your Gmail and step into a game where today's emails are presented as NPCs. 
 
-You progress through your inbox by talking to characters and selecting dialogue choices. Every choice translates to an actual email reply sent by an AI agent. 
-
-## Why it matters
-Email is a chore. By framing your inbox as a short, structured game with concrete scenes and branching choices, we remove the friction of staring at an empty reply box. It turns one person's hard day into a 30-second playable loop that actually gets work done.
+- Authenticates the user with Google OAuth.
+- Reads only today's inbox messages from Gmail.
+- Builds a story/scene graph where emails become NPC dialogue and branching choices.
+- Lets the player resolve each thread in a Three.js Minecraft-style world.
+- Flattens the chosen route into drafted replies.
+- Sends replies only after explicit user review and confirmation.
 
 ## Quick start
-Get the local environment and web app running:
+
+1. Copy environment variables and fill required secrets:
 
 ```bash
-cp .env.example .env        # Add your OPENAI_API_KEY and other vars
-make init                   # Create uv venv, sync dependencies, and link envs
-make up                     # Start local backend services (Redis, Postgres)
-make dev                    # Start the Next.js webapp at http://localhost:3000
+cp .env.example .env
 ```
 
-## How it works
-The system fetches your unread emails for the day and uses an LLM to generate a story. It structures this data into a decision tree where each email represents an interaction node:
+2. Configure Google OAuth in GCP:
 
-1. **Generation:** Emails are converted into structured NPC dialogue and player response choices.
-2. **Gameplay:** The frontend renders a 3D environment using Minecraft-style primitives (`minecraft-threejs`). You interact with the world to choose your responses.
-3. **Execution:** The chosen route is flattened at the end of the run and an agent dispatches the final email replies.
+- Add `http://localhost:9812/auth/google/callback` as an authorized redirect URI.
+- Add the deployed backend callback URL as well for production.
+- Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`.
 
-### Tree and route construction (technical)
-The story is built as a directed tree where each node is a prompt and each edge is a player option. A practical node shape is:
+3. Set required API keys in `.env`:
 
-```ts
-type StoryNode = {
-  id: string;
-  prompt: string; // NPC dialogue/question shown to the player
-  sourceEmailId?: string; // email this node is grounded on
-  options: Array<{
-    id: string;
-    label: string; // player-visible choice text
-    draftReply?: string; // candidate reply payload for this branch
-    nextNodeIds: string[]; // supports one or multiple follow-up scenes
-  }>;
-};
+- `OPENAI_API_KEY` (required for scene + draft generation)
+- `ELEVENLABS_API_KEY` (required for TTS)
+
+4. Install dependencies and run local services:
+
+```bash
+make init
+make up
+make dev
 ```
 
-Construction flow:
-- Start from today's inbox emails and transform each email into one or more `StoryNode` entries.
-- For each node, prompt the LLM to return structured output only (prompt text, options, optional follow-up hints), then validate and coerce IDs deterministically.
-- Connect nodes by writing `nextNodeIds` for each option, producing a tree rooted at the first scene.
-- During gameplay, every click records a route step like `{ nodeId, optionId, timestamp }`.
-- At completion, flatten the selected path into an ordered action list and extract `draftReply` values for agent dispatch.
+- Web app: `http://localhost:5173`
+- Backend API: `http://localhost:9812`
 
-This keeps generation (tree build), interaction (route selection), and execution (flattened sends) strictly separated, which makes the flow easier to debug and replay.
+## Main stack
+
+- Frontend: Vite + React 19 + Three.js
+- Backend: FastAPI (Python)
+- Auth + Mail: Google OAuth + Gmail API
+- AI: OpenAI chat completions + structured outputs
+- Voice: ElevenLabs
+- Infra: Docker Compose locally, Railway for deployment
 
 ## Repository layout
-This is an Nx-managed monorepo with dedicated apps for the frontend, backend, and background workers:
 
-| Path | Purpose |
-|------|---------|
-| `apps/webapp/` | Next.js 15, React 19, Tailwind 4 frontend with Three.js |
-| `apps/backend/fastapi/` | FastAPI server for handling story generation and email dispatch |
-| `apps/worker/` | Celery background worker backed by Redis |
-| `alveslib/` | Shared Python utilities (logger, agent SDK) |
-| `ml/` | AI pipelines and inference servers |
+- `apps/webapp/` - 3D gameplay client and review/send UI
+- `apps/backend/fastapi/` - auth, story generation, draft resolution, send endpoints
+- `apps/worker/` - background worker scaffold
+- `alveslib/` - shared Python utilities
 
-## Configuration
-Essential environment variables for the core game loop:
+## Core API routes
 
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | Required to power the AI agent and scene generation |
-| `NEXT_PUBLIC_REQUIRE_AUTH` | Set to `true` to enable session-based auth gating |
-| `BACKEND_MODE` | Set to `fastapi` to route requests correctly |
+- `GET /auth/google/login`
+- `GET /auth/google/callback`
+- `GET /auth/session`
+- `POST /story/scene/preview`
+- `POST /story/scene/start`
+- `POST /story/scene/{session_id}/advance`
+- `POST /story/scene/{session_id}/resolve`
+- `POST /story/scene/{session_id}/send/{email_id}`
+
+## Development notes
+
+- `STORY_WORLD_HUB_MODE=true` keeps gameplay in a single shared hub with multiple NPCs.
+- OAuth + Gmail credentials are required for end-to-end runtime behavior.
+- Replies are never sent automatically; user confirmation is mandatory.

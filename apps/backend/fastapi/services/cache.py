@@ -17,6 +17,7 @@ except ModuleNotFoundError:
     class RedisError(Exception):
         pass
 
+
 log = logging.getLogger(__name__)
 
 DEFAULT_TTL_SECONDS = 3600
@@ -58,6 +59,10 @@ def get_redis_client() -> Redis | None:
     redis_url = os.getenv("REDIS_URL", "").strip()
     if not redis_url:
         return None
+    redis_url = os.path.expandvars(redis_url)
+    if "$" in redis_url:
+        log.warning("redis_url_has_unexpanded_placeholder url=%s", redis_url)
+        return None
     if Redis is None:
         log.warning("redis_package_missing_fallback_to_memory")
         return None
@@ -66,7 +71,7 @@ def get_redis_client() -> Redis | None:
         client.ping()
         _REDIS_CLIENT = client
         return _REDIS_CLIENT
-    except RedisError:
+    except (RedisError, ValueError):
         log.warning("redis_unavailable url=%s", redis_url, exc_info=True)
         return None
 
@@ -84,7 +89,9 @@ def _mem_get(key: str) -> bytes | None:
 
 def _mem_set(key: str, value: bytes, ttl_seconds: int) -> None:
     with _MEM_LOCK:
-        _MEM_CACHE[key] = _MemEntry(value=value, expires_at=_now_utc() + timedelta(seconds=ttl_seconds))
+        _MEM_CACHE[key] = _MemEntry(
+            value=value, expires_at=_now_utc() + timedelta(seconds=ttl_seconds)
+        )
 
 
 def get_bytes(key: str) -> bytes | None:
@@ -122,7 +129,9 @@ def get_json(key: str) -> dict[str, Any] | list[Any] | None:
 
 
 def set_json(key: str, value: dict[str, Any] | list[Any], ttl_seconds: int) -> None:
-    payload = json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    payload = json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     set_bytes(key=key, value=payload, ttl_seconds=ttl_seconds)
 
 

@@ -83,42 +83,29 @@ RESOLVE_JSON_SCHEMA: dict[str, Any] = {
 
 # Instructs the LLM to cast each email sender as a Minecraft NPC and tag
 # every choice with a concrete reply intent so resolve_emails can use it.
-SCENE_SYSTEM_PROMPT = """You are a game master turning a user's email inbox into a Minecraft office-RPG.
+SCENE_SYSTEM_PROMPT = """You are a game master turning a user's inbox into a playable RPG scene.
 
 Rules:
-- Each NPC *is* one of the email senders. npc_id must equal the email id it covers.
-  npc_name should be a fun Minecraft/work re-skin of the sender (e.g. "Manager Steve",
-  "Client Builder", "Ops Villager").
-- The NPC must speak as a person in-world, not as an email summary. Write the dialogue as if the
-  sender is standing in front of the player introducing themselves and explaining what they need.
-  Good pattern: "Hi, I'm Paul. I'm applying for the front-end engineering role and my strongest
-  work is in React..." or "I'm Maya from Ops, and I need your approval on this payment today."
-- For application or recruiting emails, have the NPC introduce themselves as the candidate and
-  briefly mention 2-4 concrete resume facts if present, such as school, GPA/grade, strongest
-  project, internship impact, or technical stack.
-- Example target style: "Hi, I'm Daniel. I'm applying for the front-end developer role. I studied
-  at X, graduated with Y, and my standout project was Z."
-- Dialogue must stay clear and readable:
-  1) First sentence must be a first-person introduction that identifies who they are and why they
-     are talking to the player.
-  2) Second sentence must explain the concrete ask, urgency, or constraint in plain modern language.
-  Do not use archaic or theatrical wording like "hail, traveler, quest, sundown's last light".
-- Never describe the message as "this email", "this thread", "my subject line", "my inbox", or
-  anything else that exposes the raw email format. Convert the email contents into spoken intent.
-- Always preserve concrete context from the email (request, urgency, timeline, pricing, etc.).
-- related_email_ids must list every email id this scene covers.
-- Each choice must include an `intent` field: a short snake_case keyword that captures how
-  the player would reply to the real email (e.g. "agree_immediately", "polite_decline",
-  "ask_for_more_time", "deflect_to_colleague", "enthusiastic_yes", "rude_dismissal").
-  The label should be direct and action-first (e.g. "Send update now", "Ask for more time").
-- Do not generate a generic "Ask for context" option. Assume the player already sees the full
-  context from the inbox and NPC dialogue. Choices should be actual reply strategies, not
-  requests to restate information.
-- Avoid repetitive wording across scenes; vary phrasing and sentence openings.
-- One choice per scene should always be a wildcard / comedic option.
-- If constraints.should_end_now is true, produce a terminal scene wrapping up the story.
-  Terminal scenes have empty choices and is_terminal=true.
-- Keep dialogue to 2-3 short sentences. Keep choice labels under 6 words.
+- Build a sequential story tree. Every non-terminal scene should present one focused decision point.
+- A scene can represent one or multiple related emails. Do not force one scene per email.
+- npc_id and npc_name should represent the narrator/character for this stage and do not need to
+  match a single email id.
+- The NPC should speak in first person as if standing in front of the player, grounded in concrete
+  facts from the covered emails.
+- For recruiting/application emails, include 2-4 concrete candidate facts when present (school,
+  project, internship impact, stack, timeline).
+- Keep dialogue clear and modern:
+  1) First sentence: who they are and why they are talking now.
+  2) Second sentence: concrete ask, deadline, or constraint.
+- Do not mention raw email mechanics like "thread", "subject line", or "inbox".
+- related_email_ids must list every email id affected by this scene's decision.
+- Each choice must include an intent in short snake_case that reflects a real reply strategy.
+- Choice labels must be action-oriented and concise (prefer <= 6 words) and must be specific to
+  this scene ask, never generic fallback labels.
+- Do not output generic context-seeking options like "ask for context".
+- Use prior trace to avoid repeating the same decision point.
+- If constraints.should_end_now is true OR constraints.unresolved_email_ids is empty, return a
+  terminal scene with empty choices and is_terminal=true.
 """
 
 RESOLVE_SYSTEM_PROMPT = """You are an email assistant. Given a list of original emails and the
@@ -139,29 +126,54 @@ Keep replies concise (2-4 sentences). Match the intent faithfully — if intent 
 
 
 def _cache_enabled() -> bool:
-    return os.getenv("OPENAI_CACHE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    return os.getenv("OPENAI_CACHE_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _cache_key(prefix: str, payload: dict[str, Any]) -> str:
-    serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    serialized = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
     return f"openai:{prefix}:{hashlib.sha256(serialized.encode('utf-8')).hexdigest()}"
 
 
 def _openai_post(api_key: str, body: dict[str, Any]) -> dict[str, Any]:
     response = requests.post(
         OPENAI_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=body,
         timeout=60,
     )
     if response.status_code >= 400:
-        log.error("openai_http_error status=%s body_preview=%s", response.status_code, response.text[:500])
-        raise RuntimeError(f"OpenAI API error ({response.status_code}): {response.text}")
+        log.error(
+            "openai_http_error status=%s body_preview=%s",
+            response.status_code,
+            response.text[:500],
+        )
+        raise RuntimeError(
+            f"OpenAI API error ({response.status_code}): {response.text}"
+        )
     return response.json()
 
 
-def _build_scene_prompt(emails: list[EmailItem], trace: list[TraceStep], max_scenes: int) -> str:
+def _build_scene_prompt(
+    emails: list[EmailItem], trace: list[TraceStep], max_scenes: int
+) -> str:
     should_end = len(trace) >= max_scenes - 1
+    resolved_email_ids = sorted(
+        {email_id for step in trace for email_id in step.related_email_ids if email_id}
+    )
+    resolved_set = set(resolved_email_ids)
+    unresolved_email_ids = [
+        email.id for email in emails if email.id and email.id not in resolved_set
+    ]
     return json.dumps(
         {
             "emails": [e.model_dump() for e in emails],
@@ -171,6 +183,9 @@ def _build_scene_prompt(emails: list[EmailItem], trace: list[TraceStep], max_sce
                 "current_depth": len(trace),
                 "should_end_now": should_end,
                 "choice_count": 3 if not should_end else 0,
+                "resolved_email_ids": resolved_email_ids,
+                "unresolved_email_ids": unresolved_email_ids,
+                "single_decision_per_scene": True,
             },
         },
         ensure_ascii=True,
@@ -213,7 +228,9 @@ def build_scene(
         set_json(cache_key, scene.model_dump(), ttl_seconds=openai_cache_ttl_seconds())
     log.info(
         "openai_scene_ok scene_id=%s terminal=%s choices=%s",
-        scene.scene_id, scene.is_terminal, len(scene.choices),
+        scene.scene_id,
+        scene.is_terminal,
+        len(scene.choices),
     )
     return scene
 
@@ -251,7 +268,9 @@ def resolve_emails(
     cache_key = _cache_key(prefix="resolve", payload=body)
     if _cache_enabled():
         cached_result = get_json(cache_key)
-        if isinstance(cached_result, dict) and isinstance(cached_result.get("drafts"), list):
+        if isinstance(cached_result, dict) and isinstance(
+            cached_result.get("drafts"), list
+        ):
             drafts = [EmailDraft.model_validate(d) for d in cached_result["drafts"]]
             log.info("resolve_emails_cache_hit draft_count=%s", len(drafts))
             return drafts
@@ -267,9 +286,7 @@ def resolve_emails(
             continue
         if draft.email_id and draft.email_id not in resolved_by_email_id:
             resolved_by_email_id[draft.email_id] = draft
-    fallback_note = (
-        "Thanks for your email. I received this and will follow up shortly with the right next steps."
-    )
+    fallback_note = "Thanks for your email. I received this and will follow up shortly with the right next steps."
     complete_drafts = [
         resolved_by_email_id.get(email.id)
         or EmailDraft(

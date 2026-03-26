@@ -98,13 +98,13 @@ export const traceStepSchema = z.object({
 })
 
 export const startSceneRequestSchema = z.object({
-  user_id: z.string().default('demo-user'),
+  user_id: z.string().min(1),
   inbox_override: z.array(emailItemSchema).nullable().optional(),
 })
 
 export const inboxPreviewResponseSchema = z.object({
   emails: z.array(emailItemSchema),
-  source: z.enum(['gmail', 'mock', 'override']),
+  source: z.enum(['gmail', 'override']),
 })
 
 export const advanceSceneRequestSchema = z.object({

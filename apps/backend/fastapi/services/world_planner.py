@@ -31,7 +31,9 @@ except Exception:
 
 log = logging.getLogger(__name__)
 
-OPENAI_MODEL = os.getenv("WORLD_PLANNER_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
+OPENAI_MODEL = os.getenv(
+    "WORLD_PLANNER_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+)
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
 _VECTOR3 = {
@@ -68,7 +70,15 @@ _NPC = {
         "choices": {"type": "array", "items": _CHOICE},
         "related_email_ids": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["id", "name", "email_id", "position", "opening_line", "choices", "related_email_ids"],
+    "required": [
+        "id",
+        "name",
+        "email_id",
+        "position",
+        "opening_line",
+        "choices",
+        "related_email_ids",
+    ],
 }
 
 _SCENE = {
@@ -98,9 +108,16 @@ _SCENE = {
         },
     },
     "required": [
-        "scene_id", "npc_id", "npc_name", "dialogue",
-        "choices", "is_terminal", "related_email_ids",
-        "choice_transitions", "npcs", "environment",
+        "scene_id",
+        "npc_id",
+        "npc_name",
+        "dialogue",
+        "choices",
+        "is_terminal",
+        "related_email_ids",
+        "choice_transitions",
+        "npcs",
+        "environment",
     ],
 }
 
@@ -149,50 +166,57 @@ WORLD_PLAN_SCHEMA: dict[str, Any] = {
 }
 
 WORLD_SYSTEM_PROMPT = """You plan a compact RPG world for inbox triage.
-Return a single persistent world hub where every selected email becomes one NPC.
+Return one persistent world hub where each selected email becomes one NPC.
+
 Requirements:
 - Create exactly 1 location when emails exist.
-- Put exactly one primary NPC in that hub for each input email, up to 5 total emails.
-- Every scene must include environment with spawn and optional layout blocks.
-- Every scene must include npcs with explicit positions and dialogue.
-- Also keep top-level scene npc_id, npc_name, dialogue, choices aligned to one of the unresolved NPCs.
-- related_email_ids and npc email_id must point to known emails.
-- Do not merge multiple emails into the same NPC.
-- choice_transitions may be empty because the run stays inside one shared hub.
-- Set is_terminal=false when there are email NPCs to resolve.
-- Each NPC's opening_line must sound like the person is physically in the world talking to the
-  player in first person. They should introduce themselves and explain what they need.
-- For application or recruiting emails, the NPC should introduce themselves as the candidate and
-  briefly mention 2-4 concrete resume facts if present, such as school, grade/GPA, strongest
-  project, internship impact, or technical stack.
-- Example target style: "Hi, I'm Daniel. I'm applying for the front-end developer role. I studied
-  at X, graduated with Y, and my standout project was Z."
-- Do not write opening_line or dialogue like an inbox summary or raw email header.
-- Never say "this email", "this thread", "subject line", or "inbox".
-- Preserve the real facts from the source email, but translate them into spoken dialogue.
+- Add one NPC per email (up to 5), with explicit positions and dialogue.
+- Keep scene-level npc_id/npc_name/dialogue/choices aligned with one unresolved NPC.
+- related_email_ids and npc email_id must reference known input email ids.
+- Do not merge multiple emails into a single NPC.
+- Set is_terminal=false when unresolved email NPCs exist.
+- opening_line must be first-person spoken dialogue grounded in the source email facts.
+- npc_name must be derived from sender identity; never use fixed team rosters or placeholder names.
+- For application/recruiting emails, include 2-4 concrete candidate facts when available.
+- NPC choices must be specific to each email's ask; avoid generic fallback options like
+  "Reply now", "Send polished reply", or "Defer politely".
+- Do not mention raw inbox mechanics like "thread", "subject line", or "inbox".
+- Preserve requests, constraints, urgency, and concrete details from the source emails.
 """
 
 DEFAULT_BOUNDS = SceneWorldBounds(minX=-14, maxX=14, minZ=-14, maxZ=14)
 
 
 def _cache_key(prefix: str, payload: dict[str, Any]) -> str:
-    serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    serialized = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
     return f"openai:{prefix}:{hashlib.sha256(serialized.encode('utf-8')).hexdigest()}"
 
 
 def _cache_enabled() -> bool:
-    return os.getenv("OPENAI_CACHE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    return os.getenv("OPENAI_CACHE_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _openai_post(api_key: str, body: dict[str, Any]) -> dict[str, Any]:
     response = requests.post(
         OPENAI_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=body,
         timeout=90,
     )
     if response.status_code >= 400:
-        raise RuntimeError(f"OpenAI API error ({response.status_code}): {response.text}")
+        raise RuntimeError(
+            f"OpenAI API error ({response.status_code}): {response.text}"
+        )
     return response.json()
 
 
@@ -231,7 +255,11 @@ def _simple_layout(seed: int, location_idx: int) -> SceneLayout:
         for x in range(bx - 1, bx + 2):
             for z in range(bz - 1, bz + 2):
                 for y in range(0, height):
-                    blocks.append(SceneBlock(x=x, y=y, z=z, type="wood" if y < height - 1 else "stone"))
+                    blocks.append(
+                        SceneBlock(
+                            x=x, y=y, z=z, type="wood" if y < height - 1 else "stone"
+                        )
+                    )
     for lamp_x, lamp_z in [(-6, -6), (-6, 6), (6, -6), (6, 6)]:
         blocks.extend(
             [
@@ -246,7 +274,14 @@ def _simple_layout(seed: int, location_idx: int) -> SceneLayout:
 
 def _sender_display_name(sender: str) -> str:
     local_part = (sender or "").split("@", 1)[0]
-    tokens = [part for part in local_part.replace(".", " ").replace("_", " ").replace("-", " ").split() if part]
+    tokens = [
+        part
+        for part in local_part.replace(".", " ")
+        .replace("_", " ")
+        .replace("-", " ")
+        .split()
+        if part
+    ]
     if not tokens:
         return "there"
     return " ".join(token.capitalize() for token in tokens)
@@ -262,14 +297,22 @@ def _spoken_request_line(email: EmailItem) -> str:
     return f"Hi, I'm {speaker_name}, and I'm reaching out about {subject}. {context}"
 
 
-def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -> WorldPlan:
+def _fallback_world_plan(
+    emails: list[EmailItem], run_seed: int | None = None
+) -> WorldPlan:
     world_id = f"world-{uuid4().hex[:8]}"
     selected_emails = emails[:5] if emails else []
-    email_seed = sum(ord(char) for email in selected_emails for char in email.id) or 1337
+    email_seed = (
+        sum(ord(char) for email in selected_emails for char in email.id) or 1337
+    )
     seed = run_seed if run_seed is not None else email_seed
     base_choices = [
         SceneChoice(slug="reply_now", label="Reply now", intent="agree_immediately"),
-        SceneChoice(slug="send_polished_reply", label="Send polished reply", intent="confident_response"),
+        SceneChoice(
+            slug="send_polished_reply",
+            label="Send polished reply",
+            intent="confident_response",
+        ),
         SceneChoice(slug="defer", label="Defer politely", intent="ask_for_more_time"),
     ]
     positions = [
@@ -288,7 +331,11 @@ def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -
             choices=[],
             is_terminal=True,
             related_email_ids=[],
-            environment=SceneEnvironment(theme="inboxPlaza", spawn=SceneVector(x=0, y=0, z=8), layout=_simple_layout(seed, 0)),
+            environment=SceneEnvironment(
+                theme="inboxPlaza",
+                spawn=SceneVector(x=0, y=0, z=8),
+                layout=_simple_layout(seed, 0),
+            ),
             npcs=[],
             choice_transitions={},
         )
@@ -301,15 +348,17 @@ def _fallback_world_plan(emails: list[EmailItem], run_seed: int | None = None) -
 
     npcs: list[SceneNpc] = []
     for idx, email in enumerate(selected_emails):
-        npcs.append(SceneNpc(
-            id=email.id,
-            name=email.sender.split("@")[0].replace(".", " ").title(),
-            email_id=email.id,
-            position=positions[idx % len(positions)],
-            opening_line=_spoken_request_line(email),
-            choices=base_choices,
-            related_email_ids=[email.id],
-        ))
+        npcs.append(
+            SceneNpc(
+                id=email.id,
+                name=email.sender.split("@")[0].replace(".", " ").title(),
+                email_id=email.id,
+                position=positions[idx % len(positions)],
+                opening_line=_spoken_request_line(email),
+                choices=base_choices,
+                related_email_ids=[email.id],
+            )
+        )
     primary_npc = npcs[0]
     scene = Scene(
         scene_id="scene-hub",
@@ -347,7 +396,9 @@ def _fix_npc(npc: Any) -> dict[str, Any]:
     return {
         "id": npc.get("id") or npc.get("npc_id") or "npc",
         "name": npc.get("name") or npc.get("npc_name") or "NPC",
-        "email_id": npc.get("email_id") or npc.get("related_email_ids", [""])[0] or "email",
+        "email_id": npc.get("email_id")
+        or npc.get("related_email_ids", [""])[0]
+        or "email",
         "position": _fix_vector(npc.get("position")),
         "opening_line": npc.get("opening_line") or npc.get("dialogue") or "...",
         "choices": npc.get("choices", []),
@@ -389,7 +440,9 @@ def _fix_location(loc: Any) -> dict[str, Any]:
 def _normalise_plan(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "world_id": raw.get("world_id") or f"world-{uuid4().hex[:8]}",
-        "entry_location_id": raw.get("entry_location_id") or raw.get("entry_location") or "loc",
+        "entry_location_id": raw.get("entry_location_id")
+        or raw.get("entry_location")
+        or "loc",
         "locations": [_fix_location(loc) for loc in raw.get("locations", [])],
         "transitions": raw.get("transitions", {}),
     }
@@ -425,9 +478,15 @@ def build_world_plan(
     max_locations: int = 5,
     run_seed: int | None = None,
 ) -> WorldPlanBuild:
-    effective_seed = run_seed if run_seed is not None else int(uuid4().int % 1_000_000_000)
+    effective_seed = (
+        run_seed if run_seed is not None else int(uuid4().int % 1_000_000_000)
+    )
     if not emails:
-        return WorldPlanBuild(plan=_fallback_world_plan([], run_seed=effective_seed), source="fallback", run_seed=effective_seed)
+        return WorldPlanBuild(
+            plan=_fallback_world_plan([], run_seed=effective_seed),
+            source="fallback",
+            run_seed=effective_seed,
+        )
     effective_location_limit = min(max(1, max_locations), min(len(emails), 5))
     payload = {
         "user_id": user_id,
@@ -438,7 +497,11 @@ def build_world_plan(
     api_key = os.getenv("OPENAI_API_KEY")
     provider = os.getenv("WORLD_PLANNER_PROVIDER", "openai_structured").strip().lower()
     if not api_key:
-        return WorldPlanBuild(plan=_fallback_world_plan(emails, run_seed=effective_seed), source="fallback", run_seed=effective_seed)
+        return WorldPlanBuild(
+            plan=_fallback_world_plan(emails, run_seed=effective_seed),
+            source="fallback",
+            run_seed=effective_seed,
+        )
     body = {
         "model": OPENAI_MODEL,
         "messages": [
@@ -465,8 +528,14 @@ def build_world_plan(
             plan = _build_with_cloud_agent(payload)
             if plan is not None:
                 if _cache_enabled():
-                    set_json(cache_key, plan.model_dump(mode="json"), ttl_seconds=openai_cache_ttl_seconds())
-                return WorldPlanBuild(plan=plan, source="cloud_agent", run_seed=effective_seed)
+                    set_json(
+                        cache_key,
+                        plan.model_dump(mode="json"),
+                        ttl_seconds=openai_cache_ttl_seconds(),
+                    )
+                return WorldPlanBuild(
+                    plan=plan, source="cloud_agent", run_seed=effective_seed
+                )
         except Exception:
             log.warning("world_plan_cloud_agent_failed_fallback", exc_info=True)
     try:
@@ -474,8 +543,18 @@ def build_world_plan(
         content = json.loads(raw["choices"][0]["message"]["content"])
         plan = WorldPlan.model_validate(content)
         if _cache_enabled():
-            set_json(cache_key, plan.model_dump(mode="json"), ttl_seconds=openai_cache_ttl_seconds())
-        return WorldPlanBuild(plan=plan, source="openai_structured", run_seed=effective_seed)
+            set_json(
+                cache_key,
+                plan.model_dump(mode="json"),
+                ttl_seconds=openai_cache_ttl_seconds(),
+            )
+        return WorldPlanBuild(
+            plan=plan, source="openai_structured", run_seed=effective_seed
+        )
     except Exception:
         log.warning("world_plan_generation_failed_fallback", exc_info=True)
-        return WorldPlanBuild(plan=_fallback_world_plan(emails, run_seed=effective_seed), source="fallback", run_seed=effective_seed)
+        return WorldPlanBuild(
+            plan=_fallback_world_plan(emails, run_seed=effective_seed),
+            source="fallback",
+            run_seed=effective_seed,
+        )

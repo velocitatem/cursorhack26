@@ -27,7 +27,7 @@ const isReviewHandoffScene = (response: {
   && !response.scene.choices.length
   && !response.scene.npcs.length
 
-export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
+export const useSceneLoader = ({ userId }: { userId: string }) => {
   const [provider] = useState(() => createStoryProvider())
   const [runStage, setRunStage] = useState<RunStage>('previewing')
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -35,7 +35,7 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
   const [trace, setTrace] = useState<TraceStep[]>([])
   const [drafts, setDrafts] = useState<EmailDraft[]>([])
   const [previewEmails, setPreviewEmails] = useState<EmailItem[]>([])
-  const [previewSource, setPreviewSource] = useState<InboxPreviewResponse['source']>('mock')
+  const [previewSource, setPreviewSource] = useState<InboxPreviewResponse['source']>('gmail')
   const [sendResults, setSendResults] = useState<DraftSendResult[]>([])
   const [draftReviewStatusById, setDraftReviewStatusById] = useState<Record<string, DraftReviewStatus>>({})
   const [sendingDraftIds, setSendingDraftIds] = useState<Set<string>>(() => new Set())
@@ -90,14 +90,14 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     setTrace([])
     setDrafts([])
     setPreviewEmails([])
-    setPreviewSource('mock')
+      setPreviewSource('gmail')
     setSendResults([])
     setDraftReviewStatusById({})
     setSendingDraftIds(new Set())
     setScene(createPlaceholderScene())
 
     try {
-      const preview = await provider.preview({ user_id: userId ?? 'demo-user' })
+      const preview = await provider.preview({ user_id: userId })
       const limitedEmails = preview.emails.slice(0, 5)
       setPreviewEmails(limitedEmails)
       setPreviewSource(preview.source)
@@ -137,7 +137,7 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
 
     try {
       const response = await provider.start({
-        user_id: userId ?? 'demo-user',
+        user_id: userId,
         inbox_override: emails,
       })
       setSessionId(response.session_id)
@@ -175,7 +175,7 @@ export const useSceneLoader = ({ userId }: { userId?: string } = {}) => {
     } finally {
       setIsAdvancing(false)
     }
-  }, [applyScene, provider, scene, sessionId])
+  }, [applyScene, finalizeReviewHandoff, provider, scene, sessionId])
 
   const resolveDrafts = useCallback(async () => {
     if (!sessionId || !done) {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import hashlib
 import logging
 import os
 import random
@@ -185,13 +186,22 @@ def _mark_voice_unavailable(voice_id: str) -> None:
             _FREE_TIER_VOICE_POOL[:] = [cached_id for cached_id in _FREE_TIER_VOICE_POOL if cached_id != voice_id]
 
 
-def _pick_voice_id(exclude: set[str] | None = None) -> str:
+def _voice_candidates(exclude: set[str] | None = None) -> list[str]:
     blocked = _VOICE_DENYLIST | (exclude or set())
     voices = [voice_id for voice_id in _free_tier_voice_pool() if voice_id not in blocked]
     if not voices:
         voices = [voice_id for voice_id in _parse_voice_pool() if voice_id not in blocked]
     if not voices:
         raise RuntimeError("No ElevenLabs voice configured. Set ELEVENLABS_VOICE_IDS or ELEVENLABS_VOICE_ID.")
+    return voices
+
+
+def _pick_voice_id(exclude: set[str] | None = None, stable_key: str | None = None) -> str:
+    voices = _voice_candidates(exclude=exclude)
+    if stable_key:
+        digest = hashlib.sha256(stable_key.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:8], "big") % len(voices)
+        return voices[index]
     return random.choice(voices)
 
 
@@ -209,33 +219,41 @@ def scene_tts_url(session_id: str, scene_id: str) -> str:
     return f"/story/scene/{session_id}/{scene_id}/tts"
 
 
-def ensure_scene_entry(session_id: str, scene_id: str) -> SceneTTSCacheEntry:
+def _ensure_entry(session_id: str, scene_id: str, voice_key: str | None = None) -> SceneTTSCacheEntry:
     key = _cache_key(session_id, scene_id)
     with _LOCK:
         existing = _CACHE.get(key)
         if existing is not None:
             if not existing.voice_id:
-                existing.voice_id = _pick_voice_id()
+                existing.voice_id = _pick_voice_id(stable_key=voice_key)
                 existing.updated_at = datetime.now(UTC)
                 _write_entry(session_id=session_id, scene_id=scene_id, entry=existing)
             return existing
         cached = _read_entry(session_id=session_id, scene_id=scene_id)
         if cached is not None:
             if not cached.voice_id:
-                cached.voice_id = _pick_voice_id()
+                cached.voice_id = _pick_voice_id(stable_key=voice_key)
                 cached.updated_at = datetime.now(UTC)
                 _write_entry(session_id=session_id, scene_id=scene_id, entry=cached)
             _CACHE[key] = cached
             return cached
-        voice_id = _pick_voice_id()
+        voice_id = _pick_voice_id(stable_key=voice_key)
         created = SceneTTSCacheEntry(status="pending", voice_id=voice_id)
         _CACHE[key] = created
         _write_entry(session_id=session_id, scene_id=scene_id, entry=created)
         return created
 
 
-def set_scene_pending(session_id: str, scene_id: str) -> SceneTTSCacheEntry:
-    entry = ensure_scene_entry(session_id, scene_id)
+def ensure_scene_entry(session_id: str, scene_id: str) -> SceneTTSCacheEntry:
+    return _ensure_entry(session_id=session_id, scene_id=scene_id)
+
+
+def ensure_speaker_entry(session_id: str, scene_id: str, voice_key: str) -> SceneTTSCacheEntry:
+    return _ensure_entry(session_id=session_id, scene_id=scene_id, voice_key=voice_key)
+
+
+def set_scene_pending(session_id: str, scene_id: str, voice_key: str | None = None) -> SceneTTSCacheEntry:
+    entry = _ensure_entry(session_id=session_id, scene_id=scene_id, voice_key=voice_key)
     with _LOCK:
         entry.status = "pending"
         entry.error = None
@@ -327,13 +345,18 @@ def synthesize_tts_stream(text: str, voice_id: str) -> bytes:
     return response.content
 
 
-def generate_and_cache_scene_tts(session_id: str, scene_id: str, text: str) -> None:
+def generate_and_cache_scene_tts(
+    session_id: str,
+    scene_id: str,
+    text: str,
+    voice_key: str | None = None,
+) -> None:
     existing = get_scene_entry(session_id=session_id, scene_id=scene_id)
     if existing is not None and existing.status == "ready":
         return
-    entry = set_scene_pending(session_id, scene_id)
+    entry = set_scene_pending(session_id, scene_id, voice_key=voice_key)
     attempted_voice_ids: set[str] = set()
-    voice_id = entry.voice_id or _pick_voice_id()
+    voice_id = entry.voice_id or _pick_voice_id(stable_key=voice_key)
     while True:
         attempted_voice_ids.add(voice_id)
         try:
@@ -345,7 +368,7 @@ def generate_and_cache_scene_tts(session_id: str, scene_id: str, text: str) -> N
             if _is_paid_plan_voice_error(exc):
                 _mark_voice_unavailable(voice_id)
                 try:
-                    next_voice_id = _pick_voice_id(exclude=attempted_voice_ids)
+                    next_voice_id = _pick_voice_id(exclude=attempted_voice_ids, stable_key=voice_key)
                 except RuntimeError:
                     next_voice_id = ""
                 if next_voice_id:
@@ -364,4 +387,3 @@ def generate_and_cache_scene_tts(session_id: str, scene_id: str, text: str) -> N
                 return
             log.exception("tts_scene_failed session_id=%s scene_id=%s", session_id, scene_id)
             raise
-
